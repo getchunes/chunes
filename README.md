@@ -20,10 +20,11 @@ publishes the status.
 1. Grab `Chunes.exe` from the [latest release](../../releases/latest) and run
    it. A purple note icon appears in your tray. Right click it to make Chunes
    start with Windows.
-2. Install the companion browser extension (Chrome, Brave, Edge). It lets
-   Chunes tell SoundCloud apart from a regular YouTube video, since Windows
-   only reports "your browser is playing something". Without it Chunes still
-   works, but YouTube videos may show up as music.
+2. Install the companion browser extension,
+   [Chunes Helper](https://github.com/getchunes/chunes-extension) (Chrome,
+   Brave, Edge). It lets Chunes tell SoundCloud apart from a regular YouTube
+   video, since Windows only reports "your browser is playing something".
+   Without it Chunes still works, but YouTube videos may show up as music.
 3. Make sure Discord's setting "Share my activity" is on (Settings, Activity
    Privacy) and your status is not Invisible.
 
@@ -41,9 +42,10 @@ the only place it talks to. Chunes uses it to:
 - label the status SoundCloud or YouTube Music
 - keep the status up when a video and music play at the same time
 
-To install it manually instead of from the store: open `chrome://extensions`,
-enable Developer mode, click "Load unpacked" and pick the `extension` folder
-from this repo.
+To install it manually instead of from the store: clone the
+[chunes-extension](https://github.com/getchunes/chunes-extension) repo, open
+`chrome://extensions`, enable Developer mode, click "Load unpacked" and pick
+the cloned folder.
 
 ## Configuration (optional)
 
