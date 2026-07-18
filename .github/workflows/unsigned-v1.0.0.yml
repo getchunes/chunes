@@ -223,13 +223,12 @@ jobs:
             throw "A release for $tag already exists"
           }
 
-          git ls-remote --exit-code --tags origin "refs/tags/$tag" | Out-Null
-          $tagCheckExit = $LASTEXITCODE
-          if ($tagCheckExit -eq 0) {
-            throw "Release tag $tag already exists"
-          }
-          if ($tagCheckExit -ne 2) {
+          $tagRefs = @(git ls-remote --tags origin "refs/tags/$tag")
+          if ($LASTEXITCODE -ne 0) {
             throw "Could not check whether release tag $tag exists"
+          }
+          if ($tagRefs.Count -ne 0) {
+            throw "Release tag $tag already exists"
           }
 
       - name: Atomically create and verify exact tag
