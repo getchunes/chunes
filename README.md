@@ -87,6 +87,14 @@ pip install pyinstaller
 python -m PyInstaller --noconfirm --onefile --windowed --name Chunes --collect-submodules winrt chunes.py
 ```
 
+## Trademarks
+
+The Chunes logo references the SoundCloud logo and the YouTube Music logo.
+All rights to those marks are reserved to their respective owners, SoundCloud
+and Google LLC. This project is not affiliated with, sponsored by, or
+endorsed by SoundCloud, Google, YouTube, or Discord. The cloud glyph in the
+logo comes from Font Awesome Free (CC BY 4.0).
+
 ## Notes and limitations
 
 - Windows only. The track info comes from the Windows media session API.
