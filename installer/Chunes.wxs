@@ -1,0 +1,492 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <?ifndef ProductVersion ?>
+    <?define ProductVersion="1.0.0" ?>
+  <?endif ?>
+  <?ifndef SourceDir ?>
+    <?define SourceDir="..\dist" ?>
+  <?endif ?>
+  <?ifndef ProjectDir ?>
+    <?define ProjectDir=".." ?>
+  <?endif ?>
+
+  <Product
+    Id="*"
+    Name="Chunes"
+    Language="1033"
+    Version="$(var.ProductVersion)"
+    Manufacturer="Chunes"
+    UpgradeCode="{2DDF67BD-FBDE-4BDF-A090-F1552C2C1330}">
+    <Package
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perUser"
+      InstallPrivileges="limited"
+      Platform="x64"
+      Description="Chunes Discord music presence" />
+
+    <MajorUpgrade
+      Schedule="afterInstallInitialize"
+      DowngradeErrorMessage="A newer version of Chunes is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Property Id="ARPPRODUCTICON" Value="ChunesIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/getchunes/chunes" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/getchunes/chunes/issues" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="AUTO_UPDATE" Value="1" Secure="yes" />
+    <Property Id="ARTWORK" Value="1" Secure="yes" />
+    <Property Id="EXISTING_AUTO_UPDATE">
+      <RegistrySearch
+        Id="ExistingAutoUpdate"
+        Root="HKCU"
+        Key="Software\Chunes"
+        Name="AutomaticallyCheckForUpdates"
+        Type="raw"
+        Win64="yes" />
+    </Property>
+    <Property Id="EXISTING_ARTWORK">
+      <RegistrySearch
+        Id="ExistingArtwork"
+        Root="HKCU"
+        Key="Software\Chunes"
+        Name="LookUpOnlineCoverArt"
+        Type="raw"
+        Win64="yes" />
+    </Property>
+    <Property Id="EXISTING_INSTALL_PATH" Secure="yes">
+      <RegistrySearch
+        Id="ExistingInstallPath"
+        Root="HKCU"
+        Key="Software\Chunes"
+        Name="InstallPath"
+        Type="raw"
+        Win64="yes" />
+    </Property>
+
+    <CustomAction
+      Id="RestoreInstallFolder"
+      Property="INSTALLFOLDER"
+      Value="[EXISTING_INSTALL_PATH]" />
+    <CustomAction
+      Id="PreserveAutoUpdateOptOut"
+      Property="AUTO_UPDATE"
+      Value="0" />
+    <CustomAction
+      Id="PreserveArtworkOptOut"
+      Property="ARTWORK"
+      Value="0" />
+    <CustomAction
+      Id="MigrateOwnedAutostart"
+      FileKey="ChunesExe"
+      ExeCommand="--migrate-autostart"
+      Return="ignore" />
+    <CustomAction
+      Id="RemoveOwnedAutostart"
+      FileKey="ChunesExe"
+      ExeCommand="--remove-autostart-if-owned"
+      Return="ignore" />
+    <InstallUISequence>
+      <Custom
+        Action="RestoreInstallFolder"
+        After="AppSearch">(Installed OR WIX_UPGRADE_DETECTED) AND EXISTING_INSTALL_PATH</Custom>
+      <Custom
+        Action="PreserveAutoUpdateOptOut"
+        After="RestoreInstallFolder">EXISTING_AUTO_UPDATE = "#0"</Custom>
+      <Custom
+        Action="PreserveArtworkOptOut"
+        After="PreserveAutoUpdateOptOut">EXISTING_ARTWORK = "#0"</Custom>
+    </InstallUISequence>
+    <InstallExecuteSequence>
+      <Custom
+        Action="RestoreInstallFolder"
+        After="AppSearch">(Installed OR WIX_UPGRADE_DETECTED) AND EXISTING_INSTALL_PATH AND UILevel &lt; 5</Custom>
+      <Custom
+        Action="PreserveAutoUpdateOptOut"
+        After="RestoreInstallFolder">EXISTING_AUTO_UPDATE = "#0" AND UILevel &lt; 5</Custom>
+      <Custom
+        Action="PreserveArtworkOptOut"
+        After="PreserveAutoUpdateOptOut">EXISTING_ARTWORK = "#0" AND UILevel &lt; 5</Custom>
+      <Custom
+        Action="MigrateOwnedAutostart"
+        After="InstallFinalize">NOT REMOVE~="ALL"</Custom>
+      <Custom
+        Action="RemoveOwnedAutostart"
+        Before="RemoveFiles">REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+    </InstallExecuteSequence>
+
+    <Icon Id="ChunesIcon" SourceFile="$(var.ProjectDir)\assets\chunes-tray.ico" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="LocalProgramsFolder" Name="Programs">
+          <Directory Id="INSTALLFOLDER" Name="Chunes">
+            <Component
+              Id="ApplicationFiles"
+              Guid="{77C7E919-C15A-40F1-9FBE-C1CF354ED3EA}"
+              Win64="yes">
+              <File
+                Id="ChunesExe"
+                Source="$(var.SourceDir)\Chunes.exe">
+                <Shortcut
+                  Id="StartMenuShortcut"
+                  Directory="ProgramMenuFolder"
+                  Name="Chunes"
+                  Description="Show SoundCloud and YouTube Music in Discord"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="ChunesIcon"
+                  Advertise="no" />
+              </File>
+              <File Id="LicenseFile" Source="$(var.ProjectDir)\LICENSE" />
+              <File Id="PrivacyFile" Source="$(var.ProjectDir)\PRIVACY.md" />
+              <File
+                Id="ThirdPartyNoticesFile"
+                Source="$(var.ProjectDir)\THIRD_PARTY_NOTICES.md" />
+              <File
+                Id="ConfigExampleFile"
+                Source="$(var.ProjectDir)\config.example.json" />
+              <RegistryValue
+                Root="HKCU"
+                Key="Software\Chunes"
+                Name="InstallPath"
+                Type="string"
+                Value="[INSTALLFOLDER]"
+                KeyPath="yes" />
+              <RemoveFolder
+                Id="RemoveInstallFolder"
+                Directory="INSTALLFOLDER"
+                On="uninstall" />
+              <RemoveFolder
+                Id="TrackLocalProgramsFolder"
+                Directory="LocalProgramsFolder"
+                On="uninstall" />
+            </Component>
+
+            <Component
+              Id="AutoUpdateSetting"
+              Guid="{C2B163A3-B2C1-4126-8E56-1761C88F3192}"
+              Win64="yes">
+              <RegistryValue
+                Root="HKCU"
+                Key="Software\Chunes"
+                Name="AutomaticallyCheckForUpdates"
+                Type="integer"
+                Value="[AUTO_UPDATE]"
+                KeyPath="yes" />
+            </Component>
+
+            <Component
+              Id="ArtworkSetting"
+              Guid="{2056A853-6F02-4D27-866B-D5B261D91C21}"
+              Win64="yes">
+              <RegistryValue
+                Root="HKCU"
+                Key="Software\Chunes"
+                Name="LookUpOnlineCoverArt"
+                Type="integer"
+                Value="[ARTWORK]"
+                KeyPath="yes" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <Feature Id="Complete" Title="Chunes" Level="1">
+      <ComponentRef Id="ApplicationFiles" />
+      <ComponentRef Id="AutoUpdateSetting" />
+      <ComponentRef Id="ArtworkSetting" />
+    </Feature>
+
+    <UI Id="ChunesUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+      <Property Id="WixUI_Mode" Value="InstallDir" />
+
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="DiskCostDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="ExitDialog" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="InstallDirDlg" />
+      <DialogRef Id="MaintenanceTypeDlg" />
+      <DialogRef Id="MaintenanceWelcomeDlg" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+      <DialogRef Id="VerifyReadyDlg" />
+      <DialogRef Id="WelcomeDlg" />
+
+      <Dialog
+        Id="UpdateSettingsDlg"
+        Width="370"
+        Height="270"
+        Title="Chunes setup">
+        <Control
+          Id="Next"
+          Type="PushButton"
+          X="236"
+          Y="243"
+          Width="56"
+          Height="17"
+          Default="yes"
+          Text="Next" />
+        <Control
+          Id="Back"
+          Type="PushButton"
+          X="180"
+          Y="243"
+          Width="56"
+          Height="17"
+          Text="Back" />
+        <Control
+          Id="Cancel"
+          Type="PushButton"
+          X="304"
+          Y="243"
+          Width="56"
+          Height="17"
+          Cancel="yes"
+          Text="Cancel">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+        <Control
+          Id="Title"
+          Type="Text"
+          X="15"
+          Y="6"
+          Width="250"
+          Height="15"
+          Transparent="yes"
+          NoPrefix="yes"
+          Text="Privacy preferences" />
+        <Control
+          Id="Description"
+          Type="Text"
+          X="25"
+          Y="23"
+          Width="300"
+          Height="15"
+          Transparent="yes"
+          NoPrefix="yes"
+          Text="Choose Chunes network privacy preferences." />
+        <Control
+          Id="BannerBitmap"
+          Type="Bitmap"
+          X="0"
+          Y="0"
+          Width="370"
+          Height="44"
+          TabSkip="no"
+          Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control
+          Id="AutoUpdate"
+          Type="CheckBox"
+          X="20"
+          Y="72"
+          Width="330"
+          Height="18"
+          Property="AUTO_UPDATE"
+          CheckBoxValue="1"
+          Text="Automatically check for Chunes updates (recommended)" />
+        <Control
+          Id="PrivacyText"
+          Type="Text"
+          X="38"
+          Y="96"
+          Width="305"
+          Height="38"
+          NoPrefix="yes"
+          Text="When enabled, Chunes contacts the GitHub Releases API shortly after startup. It asks before downloading or installing anything. You can change this later from the tray menu." />
+        <Control
+          Id="Artwork"
+          Type="CheckBox"
+          X="20"
+          Y="142"
+          Width="330"
+          Height="18"
+          Property="ARTWORK"
+          CheckBoxValue="1"
+          Text="Look up online cover art on SoundCloud" />
+        <Control
+          Id="ArtworkPrivacyText"
+          Type="Text"
+          X="38"
+          Y="164"
+          Width="305"
+          Height="32"
+          NoPrefix="yes"
+          Text="When enabled, Chunes sends the current track title and artist to SoundCloud search. You can change this later from the tray menu." />
+        <Control
+          Id="PrivacyLink"
+          Type="Hyperlink"
+          X="38"
+          Y="203"
+          Width="305"
+          Height="18"
+          Text="&lt;a href=&quot;https://github.com/getchunes/chunes/blob/main/PRIVACY.md&quot;&gt;Read the Chunes privacy policy&lt;/a&gt;" />
+      </Dialog>
+
+      <Publish
+        Dialog="BrowseDlg"
+        Control="OK"
+        Event="DoAction"
+        Value="WixUIValidatePath"
+        Order="3">1</Publish>
+      <Publish
+        Dialog="BrowseDlg"
+        Control="OK"
+        Event="SpawnDialog"
+        Value="InvalidDirDlg"
+        Order="4"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID<>"1"]]></Publish>
+
+      <Publish
+        Dialog="ExitDialog"
+        Control="Finish"
+        Event="EndDialog"
+        Value="Return"
+        Order="999">1</Publish>
+
+      <Publish
+        Dialog="WelcomeDlg"
+        Control="Next"
+        Event="NewDialog"
+        Value="InstallDirDlg">NOT Installed</Publish>
+      <Publish
+        Dialog="WelcomeDlg"
+        Control="Next"
+        Event="NewDialog"
+        Value="VerifyReadyDlg">Installed AND PATCH</Publish>
+
+      <Publish
+        Dialog="InstallDirDlg"
+        Control="Back"
+        Event="NewDialog"
+        Value="WelcomeDlg">1</Publish>
+      <Publish
+        Dialog="InstallDirDlg"
+        Control="Next"
+        Event="SetTargetPath"
+        Value="[WIXUI_INSTALLDIR]"
+        Order="1">1</Publish>
+      <Publish
+        Dialog="InstallDirDlg"
+        Control="Next"
+        Event="DoAction"
+        Value="WixUIValidatePath"
+        Order="2">NOT WIXUI_DONTVALIDATEPATH</Publish>
+      <Publish
+        Dialog="InstallDirDlg"
+        Control="Next"
+        Event="SpawnDialog"
+        Value="InvalidDirDlg"
+        Order="3"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID<>"1"]]></Publish>
+      <Publish
+        Dialog="InstallDirDlg"
+        Control="Next"
+        Event="NewDialog"
+        Value="UpdateSettingsDlg"
+        Order="4">(WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID="1") AND NOT WIX_UPGRADE_DETECTED</Publish>
+      <Publish
+        Dialog="InstallDirDlg"
+        Control="Next"
+        Event="NewDialog"
+        Value="VerifyReadyDlg"
+        Order="5">(WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID="1") AND WIX_UPGRADE_DETECTED</Publish>
+      <Publish
+        Dialog="InstallDirDlg"
+        Control="ChangeFolder"
+        Property="_BrowseProperty"
+        Value="[WIXUI_INSTALLDIR]"
+        Order="1">1</Publish>
+      <Publish
+        Dialog="InstallDirDlg"
+        Control="ChangeFolder"
+        Event="SpawnDialog"
+        Value="BrowseDlg"
+        Order="2">1</Publish>
+
+      <Publish
+        Dialog="UpdateSettingsDlg"
+        Control="Back"
+        Event="NewDialog"
+        Value="InstallDirDlg">1</Publish>
+      <Publish
+        Dialog="UpdateSettingsDlg"
+        Control="Next"
+        Property="AUTO_UPDATE"
+        Value="0"
+        Order="1">NOT AUTO_UPDATE</Publish>
+      <Publish
+        Dialog="UpdateSettingsDlg"
+        Control="Next"
+        Property="ARTWORK"
+        Value="0"
+        Order="2">NOT ARTWORK</Publish>
+      <Publish
+        Dialog="UpdateSettingsDlg"
+        Control="Next"
+        Event="NewDialog"
+        Value="VerifyReadyDlg"
+        Order="3">1</Publish>
+
+      <Publish
+        Dialog="VerifyReadyDlg"
+        Control="Back"
+        Event="NewDialog"
+        Value="UpdateSettingsDlg"
+        Order="1">NOT Installed AND NOT WIX_UPGRADE_DETECTED</Publish>
+      <Publish
+        Dialog="VerifyReadyDlg"
+        Control="Back"
+        Event="NewDialog"
+        Value="InstallDirDlg"
+        Order="2">NOT Installed AND WIX_UPGRADE_DETECTED</Publish>
+      <Publish
+        Dialog="VerifyReadyDlg"
+        Control="Back"
+        Event="NewDialog"
+        Value="MaintenanceTypeDlg"
+        Order="3">Installed AND NOT PATCH</Publish>
+      <Publish
+        Dialog="VerifyReadyDlg"
+        Control="Back"
+        Event="NewDialog"
+        Value="WelcomeDlg"
+        Order="4">Installed AND PATCH</Publish>
+
+      <Publish
+        Dialog="MaintenanceWelcomeDlg"
+        Control="Next"
+        Event="NewDialog"
+        Value="MaintenanceTypeDlg">1</Publish>
+      <Publish
+        Dialog="MaintenanceTypeDlg"
+        Control="RepairButton"
+        Event="NewDialog"
+        Value="VerifyReadyDlg">1</Publish>
+      <Publish
+        Dialog="MaintenanceTypeDlg"
+        Control="RemoveButton"
+        Event="NewDialog"
+        Value="VerifyReadyDlg">1</Publish>
+      <Publish
+        Dialog="MaintenanceTypeDlg"
+        Control="Back"
+        Event="NewDialog"
+        Value="MaintenanceWelcomeDlg">1</Publish>
+
+      <Property Id="ARPNOMODIFY" Value="1" />
+    </UI>
+
+    <UIRef Id="WixUI_Common" />
+  </Product>
+</Wix>
