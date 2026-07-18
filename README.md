@@ -178,6 +178,11 @@ remove the current release early. Required SignPath secrets are
 `SIGNPATH_API_TOKEN`, `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`, and
 `SIGNPATH_SIGNING_POLICY_SLUG`.
 
+The SignPath artifact configuration and account setup checklist are under
+[`.signpath/`](.signpath/README.md). The configuration deep-signs the embedded
+`Chunes.exe`, repackages the MSI, and then signs the MSI itself while enforcing
+the Chunes product and version metadata.
+
 ## Code signing policy
 
 Free code signing provided by [SignPath.io](https://about.signpath.io),
