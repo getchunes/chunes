@@ -250,6 +250,17 @@ class PackagingTests(unittest.TestCase):
                 workflow.count("persist-credentials: false"), checkout_count
             )
 
+    def test_signpath_configuration_deep_signs_the_executable_and_msi(self):
+        config = (
+            ROOT / ".signpath" / "artifact-configuration.xml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('name="version" required="true"', config)
+        self.assertIn('path="Chunes-${version}-x64.msi"', config)
+        self.assertIn('path="Chunes.exe"', config)
+        self.assertIn('product-name="Chunes"', config)
+        self.assertIn('product-version="${version}.0"', config)
+        self.assertEqual(config.count("<authenticode-sign/>"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

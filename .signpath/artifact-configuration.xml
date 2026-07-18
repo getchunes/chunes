@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <msi-file
+    path="Chunes-${version}-x64.msi"
+    subject="Chunes"
+    author="Chunes">
+    <pe-file
+      path="Chunes.exe"
+      product-name="Chunes"
+      product-version="${version}.0"
+      file-version="${version}.0"
+      company-name="Chunes"
+      copyright="Copyright 2026 Chunes contributors"
+      original-filename="Chunes.exe">
+      <authenticode-sign/>
+    </pe-file>
+    <authenticode-sign/>
+  </msi-file>
+</artifact-configuration>
