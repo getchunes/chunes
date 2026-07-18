@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <?ifndef ProductVersion ?>
-    <?define ProductVersion="1.0.0" ?>
+    <?define ProductVersion="1.0.1" ?>
   <?endif ?>
   <?ifndef SourceDir ?>
     <?define SourceDir="..\dist" ?>
@@ -34,6 +34,11 @@
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/getchunes/chunes" />
     <Property Id="ARPHELPLINK" Value="https://github.com/getchunes/chunes/issues" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property
+      Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
+      Value="Launch Chunes when setup finishes" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#ChunesExe]" />
     <Property Id="AUTO_UPDATE" Value="1" Secure="yes" />
     <Property Id="ARTWORK" Value="1" Secure="yes" />
     <Property Id="EXISTING_AUTO_UPDATE">
@@ -86,6 +91,11 @@
       FileKey="ChunesExe"
       ExeCommand="--remove-autostart-if-owned"
       Return="ignore" />
+    <CustomAction
+      Id="LaunchChunes"
+      BinaryKey="WixCA"
+      DllEntry="WixShellExec"
+      Impersonate="yes" />
     <InstallUISequence>
       <Custom
         Action="RestoreInstallFolder"
@@ -223,7 +233,7 @@
       <DialogRef Id="VerifyReadyDlg" />
       <DialogRef Id="WelcomeDlg" />
 
-      <!-- v1.0.0-only first-install warning; remove during the v1.0.1 conversion. -->
+      <?ifdef UnsignedManualRelease ?>
       <Dialog
         Id="UnsignedWarningDlg"
         Width="370"
@@ -266,7 +276,7 @@
           Height="18"
           Transparent="yes"
           NoPrefix="yes"
-          Text="{\WixUI_Font_Title}UNSIGNED INTERIM v1.0.0" />
+          Text="{\WixUI_Font_Title}UNSIGNED MANUAL v$(var.ProductVersion)" />
         <Control
           Id="Description"
           Type="Text"
@@ -296,7 +306,7 @@
           Width="330"
           Height="62"
           NoPrefix="yes"
-          Text="Chunes v1.0.0 is intentionally unsigned. Windows will say Unknown publisher. Install it only if it came from the immutable v1.0.0 GitHub release and you verified the downloaded MSI against that release's SHA-256 digest." />
+          Text="Chunes v$(var.ProductVersion) is intentionally unsigned. Windows will say Unknown publisher. Install it only from the immutable GitHub release for this version after verifying the MSI against that release's SHA-256 digest." />
         <Control
           Id="ReleaseLink"
           Type="Hyperlink"
@@ -304,7 +314,7 @@
           Y="133"
           Width="330"
           Height="18"
-          Text="&lt;a href=&quot;https://github.com/getchunes/chunes/releases/tag/v1.0.0&quot;&gt;Open the immutable Chunes v1.0.0 GitHub release&lt;/a&gt;" />
+          Text="&lt;a href=&quot;https://github.com/getchunes/chunes/releases/tag/v$(var.ProductVersion)&quot;&gt;Open the Chunes v$(var.ProductVersion) GitHub release&lt;/a&gt;" />
         <Control
           Id="FutureUpdateText"
           Type="Text"
@@ -313,8 +323,9 @@
           Width="330"
           Height="45"
           NoPrefix="yes"
-          Text="Chunes remains fail-closed for updates. Every future MSI downloaded by Chunes must pass Windows trust and identify exactly SignPath Foundation before it can be installed." />
+          Text="This manual release does not weaken update verification. Chunes automatically installs only Windows-trusted updates signed by SignPath Foundation." />
       </Dialog>
+      <?endif ?>
 
       <Dialog
         Id="UpdateSettingsDlg"
@@ -408,7 +419,7 @@
           Height="18"
           Property="ARTWORK"
           CheckBoxValue="1"
-          Text="Look up online cover art on SoundCloud" />
+          Text="Look up online album art" />
         <Control
           Id="ArtworkPrivacyText"
           Type="Text"
@@ -417,7 +428,7 @@
           Width="305"
           Height="32"
           NoPrefix="yes"
-          Text="When enabled, Chunes sends the current track title and artist to SoundCloud search. You can change this later from the tray menu." />
+          Text="When enabled, Chunes may use the current track title and artist to find online album art. You can change this later from the tray menu." />
         <Control
           Id="PrivacyLink"
           Type="Hyperlink"
@@ -444,26 +455,36 @@
       <Publish
         Dialog="ExitDialog"
         Control="Finish"
+        Event="DoAction"
+        Value="LaunchChunes"
+        Order="1">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed</Publish>
+      <Publish
+        Dialog="ExitDialog"
+        Control="Finish"
         Event="EndDialog"
         Value="Return"
         Order="999">1</Publish>
 
+      <?ifdef UnsignedManualRelease ?>
       <Publish
         Dialog="WelcomeDlg"
         Control="Next"
         Event="NewDialog"
-        Value="UnsignedWarningDlg">NOT Installed AND NOT WIX_UPGRADE_DETECTED</Publish>
+        Value="UnsignedWarningDlg">NOT Installed</Publish>
+      <?else ?>
       <Publish
         Dialog="WelcomeDlg"
         Control="Next"
         Event="NewDialog"
-        Value="InstallDirDlg">NOT Installed AND WIX_UPGRADE_DETECTED</Publish>
+        Value="InstallDirDlg">NOT Installed</Publish>
+      <?endif ?>
       <Publish
         Dialog="WelcomeDlg"
         Control="Next"
         Event="NewDialog"
         Value="VerifyReadyDlg">Installed AND PATCH</Publish>
 
+      <?ifdef UnsignedManualRelease ?>
       <Publish
         Dialog="UnsignedWarningDlg"
         Control="Back"
@@ -474,6 +495,7 @@
         Control="Next"
         Event="NewDialog"
         Value="InstallDirDlg">1</Publish>
+      <?endif ?>
 
       <Publish
         Dialog="InstallDirDlg"

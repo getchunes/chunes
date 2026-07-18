@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$SkipExecutable,
+    [switch]$UnsignedManualRelease,
     [string]$WixBin
 )
 
@@ -52,12 +53,18 @@ New-Item -ItemType Directory -Path $installerBuild -Force | Out-Null
 $wixObject = Join-Path $installerBuild "Chunes.wixobj"
 $msi = Join-Path $root "dist\Chunes-$version-x64.msi"
 
+$candleDefinitions = @()
+if ($UnsignedManualRelease) {
+    $candleDefinitions += "-dUnsignedManualRelease=1"
+}
+
 & $candle `
     -nologo `
     -arch x64 `
     "-dProductVersion=$version" `
     "-dSourceDir=$(Join-Path $root 'dist')" `
     "-dProjectDir=$root" `
+    @candleDefinitions `
     -out $wixObject `
     (Join-Path $root "installer\Chunes.wxs")
 if ($LASTEXITCODE -ne 0) {
@@ -67,6 +74,7 @@ if ($LASTEXITCODE -ne 0) {
 & $light `
     -nologo `
     -ext WixUIExtension `
+    -ext WixUtilExtension `
     -cultures:en-us `
     -sice:ICE91 `
     -out $msi `

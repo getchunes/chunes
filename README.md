@@ -31,11 +31,10 @@ Run a newer MSI to upgrade Chunes or rerun the current MSI to repair it. Windows
 UpgradeCode, restore a custom installation directory, and preserve existing
 automatic-update and artwork opt-outs during upgrades.
 
-### v1.0.0 unsigned interim
+### Release trust
 
-Chunes v1.0.0 is the sole intentionally unsigned Chunes MSI. SignPath
-Foundation approval was still pending for this interim release, so Windows
-reports **Unknown publisher**. Obtain `Chunes-1.0.0-x64.msi` only from the
+Chunes v1.0.0 was the initial unsigned MSI. Windows reports **Unknown
+publisher**. Obtain `Chunes-1.0.0-x64.msi` only from the
 immutable [v1.0.0 GitHub release](https://github.com/getchunes/chunes/releases/tag/v1.0.0).
 The release title and notes prominently identify it as **UNSIGNED INTERIM**.
 
@@ -51,11 +50,12 @@ A match confirms that the downloaded bytes are the bytes in that immutable
 GitHub release. It does not provide Authenticode publisher identity, prove that
 the code is safe, or turn the unsigned MSI into a signed one.
 
-Chunes v1.0.1 will be the first signed release. Every official v1.0.1 and later
-MSI must have a Windows-trusted Authenticode signature whose publisher is
-exactly **SignPath Foundation**. Releases are immutable: v1.0.0 is never
-replaced or retagged, and any fix or signing transition is published under a
-new version.
+New releases use one of two channels. A signed stable release is published as
+`latest` and is eligible for the in-app updater. If code signing is unavailable,
+an unsigned release may instead be published as an explicitly labeled manual
+prerelease; Windows shows **Unknown publisher**, and the in-app updater does not
+offer it. Every release and tag is immutable. A later signing transition always
+uses a higher version rather than replacing an unsigned release.
 
 ## How it works
 
@@ -75,7 +75,8 @@ the exact media type `application/json`:
     "youtubeMusic": true
   },
   "tabs": [
-    {"host": "soundcloud.com", "title": "Track by Artist"}
+    {"host": "soundcloud.com", "mediaId": null, "title": "Track by Artist"},
+    {"host": "music.youtube.com", "mediaId": "a1B2c3D4e5F", "title": "Track - Artist"}
   ]
 }
 ```
@@ -87,10 +88,10 @@ report expires after 90 seconds. The tray displays **Chune ID: on**, **off**, or
 **not connected** so the extension master state is visible without duplicating
 its control in the app.
 
-Every successful desktop response includes `X-Chunes-Protocol: 1`. Chune ID
+Every successful desktop response includes `X-Chunes-Protocol: 2`. Chune ID
 must require that header before accepting a `200` or `204` response, so an old
-desktop listener cannot be mistaken for protocol v1. This coordinated release
-does not support the legacy tab-list payload.
+desktop listener cannot be mistaken for protocol v2. Chune ID and Chunes 1.0.1
+replace the protocol-1 payload as a coordinated upgrade.
 
 Without Chune ID, Chunes can still use Windows media metadata, but it cannot
 reliably distinguish supported music from unrelated browser playback or retain
@@ -104,8 +105,8 @@ the correct service when another tab owns the browser media session.
   unrelated same-named registry values untouched.
 - **Automatically check for updates** persists the startup update preference.
 - **Check for updates now** performs an immediate manual check.
-- **Look up online cover art** persists whether title and artist may be searched
-  on SoundCloud.
+- **Look up online album art** persists whether Chunes may search SoundCloud or,
+  for an identified YouTube Music track, request its exact square music artwork.
 - **Open log** opens `%LOCALAPPDATA%\Chunes\chunes.log`.
 - **Quit** clears the process from the notification area and stops Chunes.
 
@@ -137,8 +138,8 @@ publisher, and MSI identity checks, waits for Windows Installer, then relaunches
 the installed app. Cancellation or failure attempts to relaunch the unchanged
 previous executable instead.
 
-The v1.0.0 installer being unsigned does not create an updater exception.
-Unsigned v1.0.0 remains fail-closed and will download or install only a newer
+Running an unsigned Chunes version does not create an updater exception. It
+remains fail-closed and will download or install only a newer
 MSI that passes the immutable-release, digest, exact identity, Windows trust,
 and exact **SignPath Foundation** publisher checks. There is no unsigned update
 bypass.
@@ -194,13 +195,7 @@ asset loading resolves through PyInstaller's extraction directory when frozen.
 
 ## Release process
 
-`.github/workflows/unsigned-v1.0.0.yml` is the one-time historical exception.
-It can run only by manual dispatch from `main`, hard-codes v1.0.0, builds and
-tests without signing secrets, proves both raw outputs are `NotSigned`, and
-publishes only through the protected `unsigned-v1-interim` environment. It
-refuses any existing v1.0.0 release or tag. It never deletes or replaces either.
-
-`.github/workflows/release.yml` is the stable signed path for v1.0.1 and later.
+`.github/workflows/release.yml` is the preferred stable signed path.
 It runs only by explicit workflow dispatch from `main`. Separate jobs build
 without secrets, sign in the `code-signing` environment, and publish with
 `contents: write` only in the `stable-release` environment. There is no unsigned
@@ -209,13 +204,20 @@ the exact SignPath Foundation publisher, MSI identity, and the embedded
 `Chunes.exe` signature and metadata after SignPath output and after the artifact
 handoff.
 
+`.github/workflows/release-unsigned.yml` is the manual fallback when code
+signing is unavailable. It requires explicit confirmation and a separate
+protected environment, proves the raw EXE, embedded EXE, and MSI are unsigned,
+and includes a versioned installer warning. It publishes an immutable GitHub
+prerelease without changing `/releases/latest`, so the in-app updater never
+offers it.
+
 Repository release immutability is enabled and must be independently confirmed
 by a maintainer before either workflow is dispatched; GitHub's scoped workflow
-token cannot read that administrator-only setting. Both workflows require an
+token cannot read that administrator-only setting. Both release workflows require an
 unused release and tag, an exact tag ref at the dispatched `GITHUB_SHA`, a draft
 containing only the expected MSI, and a GitHub asset digest matching the local
-SHA-256. They recheck the tag immediately before publishing as latest and fail
-unless the published release reports `immutable: true`. External actions are
+SHA-256. They recheck the tag immediately before publication and fail unless
+the published release reports `immutable: true`. External actions are
 pinned to resolved full commit SHAs, checkout credentials are not persisted,
 and handoff artifacts expire after one day without compression. Published
 releases are never recreated; corrections always use a new version.
@@ -231,11 +233,11 @@ the Chunes product and version metadata.
 
 ## Code signing policy
 
-Beginning with v1.0.1, free code signing is provided by
+The preferred stable release path uses free code signing provided by
 [SignPath.io](https://about.signpath.io), certificate by
-[SignPath Foundation](https://signpath.org). The intentionally unsigned v1.0.0
-interim MSI is the only exception to this binary-signing policy; its updater
-still accepts only SignPath Foundation-signed future MSI updates.
+[SignPath Foundation](https://signpath.org). If that service is unavailable or
+the project is not approved, the separate unsigned manual-prerelease path keeps
+releases possible without weakening automatic-update verification.
 
 - Authors and committers: [@dubsector](https://github.com/dubsector)
 - Reviewers: [@dubsector](https://github.com/dubsector)
@@ -247,8 +249,8 @@ changes, reviews changes from other contributors, and manually approves every
 code-signing request. The Chunes project acknowledges and accepts the
 [SignPath Foundation conditions for open-source code signing](https://signpath.org/terms).
 
-Chunes transfers information only for the Discord presence, optional SoundCloud
-artwork, and optional GitHub update functions explicitly described in the
+Chunes transfers information only for Discord presence, optional SoundCloud or
+YouTube Music album artwork, and optional GitHub update functions described in the
 privacy policy. The installer and tray provide the documented opt-outs.
 
 ## License and notices

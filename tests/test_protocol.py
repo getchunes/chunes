@@ -9,8 +9,12 @@ VALID_REPORT = {
     "enabled": True,
     "services": {"soundcloud": True, "youtubeMusic": True},
     "tabs": [
-        {"host": "soundcloud.com", "title": "Song by Artist"},
-        {"host": "music.youtube.com", "title": "Track - Artist"},
+        {"host": "soundcloud.com", "mediaId": None, "title": "Song by Artist"},
+        {
+            "host": "music.youtube.com",
+            "mediaId": "a1B2c3D4e5F",
+            "title": "Track - Artist",
+        },
     ],
 }
 
@@ -60,6 +64,14 @@ class ReportValidationTests(unittest.TestCase):
         extra_tab_member["tabs"][0]["audible"] = True
         invalid.append(extra_tab_member)
 
+        soundcloud_media_id = copy.deepcopy(VALID_REPORT)
+        soundcloud_media_id["tabs"][0]["mediaId"] = "a1B2c3D4e5F"
+        invalid.append(soundcloud_media_id)
+
+        invalid_youtube_media_id = copy.deepcopy(VALID_REPORT)
+        invalid_youtube_media_id["tabs"][1]["mediaId"] = "not-a-video-id"
+        invalid.append(invalid_youtube_media_id)
+
         invalid_host = copy.deepcopy(VALID_REPORT)
         invalid_host["tabs"][0]["host"] = "SoundCloud.com:443"
         invalid.append(invalid_host)
@@ -102,7 +114,7 @@ class ReportValidationTests(unittest.TestCase):
 
         too_many = copy.deepcopy(VALID_REPORT)
         too_many["tabs"] = [
-            {"host": "soundcloud.com", "title": "Song"}
+            {"host": "soundcloud.com", "mediaId": None, "title": "Song"}
             for _ in range(protocol.MAX_TABS + 1)
         ]
         with self.assertRaises(protocol.ProtocolError):
@@ -228,7 +240,13 @@ class ServicePolicyTests(unittest.TestCase):
         report["services"]["youtubeMusic"] = False
         self.assertEqual(
             protocol.enabled_tabs(report),
-            [{"host": "soundcloud.com", "title": "Song by Artist"}],
+            [
+                {
+                    "host": "soundcloud.com",
+                    "mediaId": None,
+                    "title": "Song by Artist",
+                }
+            ],
         )
         report["enabled"] = False
         self.assertEqual(protocol.enabled_tabs(report), [])

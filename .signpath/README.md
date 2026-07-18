@@ -1,9 +1,9 @@
-# SignPath Setup and v1.0.1 Conversion
+# SignPath Setup and Release Fallback
 
 Chunes targets the free SignPath Foundation open-source code-signing program.
 The intentionally unsigned v1.0.0 interim release must remain unchanged forever.
-Do not delete, recreate, retag, or replace its MSI after publication. The first
-signed release is v1.0.1.
+Do not delete, recreate, retag, or replace its MSI after publication. No future
+version is reserved for signing.
 
 ## SignPath Setup
 
@@ -31,26 +31,24 @@ the outer MSI. The workflow independently verifies both signatures, the exact
 `SignPath Foundation` publisher, EXE metadata, MSI product identity, UpgradeCode,
 and SHA-256 after signing and again before publication.
 
-## Post-Approval v1.0.1 Runbook
+## Signed Release Runbook
 
 1. Preserve the immutable v1.0.0 release, tag, and MSI forever. Do not use a
    recreation or replacement process.
 2. Confirm the SignPath GitHub App, default `artifact-configuration.xml`, manual
    release signing policy, protected environments, all four `code-signing`
    secrets, and repository release immutability are configured.
-3. Create a pull request that changes `version.py`, the fallback
+3. Choose the next unused version and synchronize `version.py`, the fallback
    `ProductVersion` in `installer/Chunes.wxs`, and every version tuple/string in
-   `installer/version_info.txt` from 1.0.0 to 1.0.1.
-4. In the same pull request, remove the v1.0.0-only unsigned warning dialog and
-   routing from `installer/Chunes.wxs`, delete
-   `.github/workflows/unsigned-v1.0.0.yml`, and update documentation and tests to
-   describe the completed signed transition.
+   `installer/version_info.txt`.
+4. Confirm the normal build omits the conditional unsigned manual-release
+   warning and that documentation describes the selected release channel.
 5. Preserve installer UpgradeCode
-   `{2DDF67BD-FBDE-4BDF-A090-F1552C2C1330}` exactly so v1.0.1 upgrades v1.0.0.
+   `{2DDF67BD-FBDE-4BDF-A090-F1552C2C1330}` exactly so the release upgrades prior versions.
 6. Merge only through the protected pull-request path after Windows CI and
    CodeQL pass on the reviewed conversion.
-7. From the merged `main` commit, manually dispatch `Sign and release` with
-   version `1.0.1`. Never publish an unsigned v1.0.1 artifact.
+7. From the merged `main` commit, manually dispatch `Sign and release` with the
+   synchronized version.
 8. Approve the protected `code-signing` job, then manually approve the SignPath
    signing request. Review the workflow's outer-MSI and embedded-EXE trust,
    publisher, identity, metadata, and digest results.
@@ -58,12 +56,33 @@ and SHA-256 after signing and again before publication.
    workflow must create the exact tag at `GITHUB_SHA`, upload the sole MSI to a
    draft, verify its GitHub digest, and publish it as an immutable latest
    release.
-10. Download the published v1.0.1 MSI and verify the release's immutable badge
+10. Download the published MSI and verify the release's immutable badge
     and asset digest, the outer MSI signature, the extracted and installed
     `Chunes.exe` signature and metadata, a clean per-user installation, and an
     in-place upgrade from the immutable v1.0.0 MSI.
 
 Both the outer MSI and embedded or installed EXE must be Windows-trusted and
-identify exactly `SignPath Foundation`. If any check fails, do not publish or
-distribute v1.0.1; fix the source or SignPath configuration through a new pull
-request and rerun the signed workflow without weakening its checks.
+identify exactly `SignPath Foundation`. If verification fails, fix the source
+or signing configuration through a new pull request and rerun the signed
+workflow without weakening its checks.
+
+## Unsigned Fallback Runbook
+
+Use this path only when SignPath approval or service is unavailable, not when a
+candidate fails security or identity verification.
+
+1. Keep the same reviewed source and next unused version; never reuse a tag or
+   replace a release asset.
+2. Confirm the `unsigned-manual-release` environment is protected and release
+   immutability remains enabled.
+3. Manually dispatch `Publish unsigned manual release`, enter the synchronized
+   version, and explicitly confirm the unsigned publication.
+4. Verify the workflow proves the raw EXE, embedded EXE, and MSI are `NotSigned`
+   and that the MSI contains the versioned unsigned warning.
+5. Publish only as an immutable GitHub prerelease with `make_latest=false`.
+   Confirm `/releases/latest` did not change, so automatic updates remain
+   SignPath-only.
+6. Test a manual install and in-place upgrade, including the Windows **Unknown
+   publisher** prompt and installer warning.
+7. If signing becomes available later, use the next higher version through the
+   signed runbook. Never sign or replace the already published unsigned MSI.

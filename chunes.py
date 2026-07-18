@@ -283,7 +283,7 @@ def main():
             ),
             pystray.MenuItem("Check for updates now", check_for_updates),
             pystray.MenuItem(
-                "Look up online cover art",
+                "Look up online album art",
                 toggle_artwork,
                 checked=lambda item: settings.artwork_enabled(),
             ),
