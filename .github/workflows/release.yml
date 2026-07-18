@@ -6,13 +6,8 @@ on:
       version:
         description: Stable version from version.py
         required: true
-        default: 1.0.0
+        default: 1.0.1
         type: string
-      confirm_v1_recreation:
-        description: I removed the zero-download v1.0.0 release and tag immediately before this final recreation
-        required: true
-        default: false
-        type: boolean
 
 permissions: {}
 
@@ -22,28 +17,27 @@ concurrency:
 
 jobs:
   build:
-    name: Build unsigned signing input
+    name: Build signing input
     runs-on: windows-2022
     timeout-minutes: 30
     permissions:
       contents: read
     env:
       RELEASE_VERSION: ${{ inputs.version }}
-      CONFIRM_V1_RECREATION: ${{ inputs.confirm_v1_recreation }}
     outputs:
       signing_input_id: ${{ steps.upload-signing-input.outputs.artifact-id }}
     steps:
-      - name: Require main and explicit recreation confirmation
+      - name: Require main and a stable version
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF -ne "refs/heads/main") {
+          if ($env:GITHUB_REF -cne "refs/heads/main") {
             throw "Stable releases must be dispatched from main"
           }
           if ($env:RELEASE_VERSION -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
             throw "Release version must be a stable semantic version"
           }
-          if ($env:RELEASE_VERSION -eq "1.0.0" -and $env:CONFIRM_V1_RECREATION -ne "true") {
-            throw "Recreating v1.0.0 requires explicit confirmation"
+          if ([version]$env:RELEASE_VERSION -lt [version]"1.0.1") {
+            throw "Signed stable releases begin at v1.0.1"
           }
 
       - name: Check out source
@@ -63,11 +57,11 @@ jobs:
         shell: pwsh
         run: |
           $sourceVersion = (python -c "from version import __version__; print(__version__)").Trim()
-          if ($sourceVersion -ne $env:RELEASE_VERSION) {
+          if ($sourceVersion -cne $env:RELEASE_VERSION) {
             throw "Requested $env:RELEASE_VERSION but source is $sourceVersion"
           }
 
-      - name: Require unused release tag
+      - name: Require unused release tag before signing
         shell: pwsh
         run: |
           $tag = "v$env:RELEASE_VERSION"
@@ -112,7 +106,7 @@ jobs:
           retention-days: 1
 
   sign:
-    name: Sign and verify MSI
+    name: Sign and verify MSI and embedded EXE
     needs: build
     runs-on: windows-2022
     timeout-minutes: 30
@@ -150,21 +144,75 @@ jobs:
           parameters: |
             version: ${{ toJSON(inputs.version) }}
 
-      - name: Verify signed release artifact
+      - name: Get hash-locked WiX extractor
+        shell: pwsh
+        run: |
+          $wixBin = (& .\scripts\get-wix.ps1 -Destination (Join-Path $env:RUNNER_TEMP "wix-3.14.1-sign")).Trim()
+          "WIX_BIN=$wixBin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify signed MSI and embedded EXE
         id: verify-signed
         shell: pwsh
         run: |
           $name = "Chunes-$env:RELEASE_VERSION-x64.msi"
-          $matches = @(Get-ChildItem -LiteralPath "signed" -Recurse -File | Where-Object Name -eq $name)
-          if ($matches.Count -ne 1) {
+          $files = @(Get-ChildItem -LiteralPath "signed" -Recurse -File)
+          if ($files.Count -ne 1 -or $files[0].Name -cne $name) {
             throw "SignPath output must contain exactly one $name"
           }
-          $path = $matches[0].FullName
+          $path = $files[0].FullName
           $env:CHUNES_SIGNED_MSI = $path
           python -c "import os; from updater import verify_authenticode, verify_msi_identity; p=os.environ['CHUNES_SIGNED_MSI']; verify_authenticode(p, 'SignPath Foundation'); verify_msi_identity(p, os.environ['RELEASE_VERSION'])"
           if ($LASTEXITCODE -ne 0) {
             throw "Signed MSI did not pass the updater trust and identity policy"
           }
+
+          function Assert-SignPathSignature([string]$candidate) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $candidate
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or -not $signature.SignerCertificate) {
+              throw "Authenticode is not Windows-trusted for $candidate`: $($signature.Status)"
+            }
+            $publisher = $signature.SignerCertificate.GetNameInfo(
+              [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+              $false
+            )
+            if ($publisher -cne "SignPath Foundation") {
+              throw "Unexpected Authenticode publisher for $candidate`: $publisher"
+            }
+          }
+          Assert-SignPathSignature $path
+
+          $extract = Join-Path $env:RUNNER_TEMP "signpath-output-extracted"
+          Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $extract | Out-Null
+          & (Join-Path $env:WIX_BIN "dark.exe") -nologo -x $extract -o (Join-Path $extract "package.wxs") $path
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not safely extract the signed MSI"
+          }
+          $decompiledPath = Join-Path $extract "package.wxs"
+          [xml]$decompiled = Get-Content -LiteralPath $decompiledPath -Raw
+          $namespace = New-Object System.Xml.XmlNamespaceManager($decompiled.NameTable)
+          $namespace.AddNamespace("w", "http://schemas.microsoft.com/wix/2006/wi")
+          $payloads = @($decompiled.SelectNodes("//w:File[@Name='Chunes.exe']", $namespace))
+          if ($payloads.Count -ne 1 -or $payloads[0].Id -cne "ChunesExe") {
+            throw "Signed MSI must map exactly one ChunesExe payload to Chunes.exe"
+          }
+          $embeddedExe = Get-Item -LiteralPath (Join-Path $extract "File\ChunesExe")
+          Assert-SignPathSignature $embeddedExe.FullName
+
+          $expectedFileVersion = "$env:RELEASE_VERSION.0"
+          $expectedMetadata = @{
+            ProductName = "Chunes"
+            ProductVersion = $expectedFileVersion
+            FileVersion = $expectedFileVersion
+            CompanyName = "Chunes"
+            OriginalFilename = "Chunes.exe"
+          }
+          foreach ($metadataName in $expectedMetadata.Keys) {
+            if ($embeddedExe.VersionInfo.$metadataName -cne $expectedMetadata[$metadataName]) {
+              throw "Unexpected embedded EXE $metadataName`: $($embeddedExe.VersionInfo.$metadataName)"
+            }
+          }
+
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
           "path=$path" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "signed_sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -182,7 +230,7 @@ jobs:
     name: Publish signed stable release
     needs: sign
     runs-on: windows-2022
-    timeout-minutes: 10
+    timeout-minutes: 15
     environment: stable-release
     permissions:
       actions: read
@@ -190,6 +238,13 @@ jobs:
     env:
       RELEASE_VERSION: ${{ inputs.version }}
     steps:
+      - name: Require dispatch from main
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -cne "refs/heads/main") {
+            throw "Stable releases must be dispatched from main"
+          }
+
       - name: Check out verification source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -207,15 +262,21 @@ jobs:
           name: signed-release-${{ github.run_id }}
           path: signed-release
 
-      - name: Reverify publication artifact
+      - name: Get hash-locked WiX extractor
+        shell: pwsh
+        run: |
+          $wixBin = (& .\scripts\get-wix.ps1 -Destination (Join-Path $env:RUNNER_TEMP "wix-3.14.1-publish")).Trim()
+          "WIX_BIN=$wixBin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Reverify signed MSI and embedded EXE for publication
         shell: pwsh
         run: |
           $name = "Chunes-$env:RELEASE_VERSION-x64.msi"
-          $matches = @(Get-ChildItem -LiteralPath "signed-release" -Recurse -File | Where-Object Name -eq $name)
-          if ($matches.Count -ne 1) {
+          $files = @(Get-ChildItem -LiteralPath "signed-release" -Recurse -File)
+          if ($files.Count -ne 1 -or $files[0].Name -cne $name) {
             throw "Publication input must contain exactly one $name"
           }
-          $path = $matches[0].FullName
+          $path = $files[0].FullName
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
           if ($hash -cne "${{ needs.sign.outputs.signed_sha256 }}") {
             throw "Signed artifact changed between signing and publication"
@@ -225,22 +286,98 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Publication MSI did not pass the updater trust and identity policy"
           }
-          "SIGNED_MSI=$path" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Recheck unused release tag
+          function Assert-SignPathSignature([string]$candidate) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $candidate
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or -not $signature.SignerCertificate) {
+              throw "Authenticode is not Windows-trusted for $candidate`: $($signature.Status)"
+            }
+            $publisher = $signature.SignerCertificate.GetNameInfo(
+              [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+              $false
+            )
+            if ($publisher -cne "SignPath Foundation") {
+              throw "Unexpected Authenticode publisher for $candidate`: $publisher"
+            }
+          }
+          Assert-SignPathSignature $path
+
+          $extract = Join-Path $env:RUNNER_TEMP "publication-msi-extracted"
+          Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $extract | Out-Null
+          & (Join-Path $env:WIX_BIN "dark.exe") -nologo -x $extract -o (Join-Path $extract "package.wxs") $path
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not safely extract the publication MSI"
+          }
+          $decompiledPath = Join-Path $extract "package.wxs"
+          [xml]$decompiled = Get-Content -LiteralPath $decompiledPath -Raw
+          $namespace = New-Object System.Xml.XmlNamespaceManager($decompiled.NameTable)
+          $namespace.AddNamespace("w", "http://schemas.microsoft.com/wix/2006/wi")
+          $payloads = @($decompiled.SelectNodes("//w:File[@Name='Chunes.exe']", $namespace))
+          if ($payloads.Count -ne 1 -or $payloads[0].Id -cne "ChunesExe") {
+            throw "Publication MSI must map exactly one ChunesExe payload to Chunes.exe"
+          }
+          $embeddedExe = Get-Item -LiteralPath (Join-Path $extract "File\ChunesExe")
+          Assert-SignPathSignature $embeddedExe.FullName
+
+          $expectedFileVersion = "$env:RELEASE_VERSION.0"
+          $expectedMetadata = @{
+            ProductName = "Chunes"
+            ProductVersion = $expectedFileVersion
+            FileVersion = $expectedFileVersion
+            CompanyName = "Chunes"
+            OriginalFilename = "Chunes.exe"
+          }
+          foreach ($metadataName in $expectedMetadata.Keys) {
+            if ($embeddedExe.VersionInfo.$metadataName -cne $expectedMetadata[$metadataName]) {
+              throw "Unexpected embedded EXE $metadataName`: $($embeddedExe.VersionInfo.$metadataName)"
+            }
+          }
+          "SIGNED_MSI=$path" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SIGNED_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Require unused release identity
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          $apiVersion = "2026-03-10"
           $tag = "v$env:RELEASE_VERSION"
+          $releaseIds = @(gh api --paginate -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == `"$tag`") | .id")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not check existing releases"
+          }
+          if ($releaseIds.Count -ne 0) {
+            throw "A release for $tag already exists"
+          }
+
           git ls-remote --exit-code --tags origin "refs/tags/$tag" | Out-Null
           $tagCheckExit = $LASTEXITCODE
           if ($tagCheckExit -eq 0) {
-            throw "Release tag $tag appeared during signing"
+            throw "Release tag $tag already exists"
           }
           if ($tagCheckExit -ne 2) {
-            throw "Could not recheck release tag $tag"
+            throw "Could not check whether release tag $tag exists"
           }
 
-      - name: Publish signed stable release
+      - name: Atomically create and verify exact tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $apiVersion = "2026-03-10"
+          $tag = "v$env:RELEASE_VERSION"
+          $fullRef = "refs/tags/$tag"
+          gh api --method POST -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/git/refs" -f "ref=$fullRef" -f "sha=$env:GITHUB_SHA" | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not atomically create $fullRef"
+          }
+          $ref = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $ref.ref -cne $fullRef -or $ref.object.type -cne "commit" -or $ref.object.sha -cne $env:GITHUB_SHA) {
+            throw "Created tag does not point exactly to GITHUB_SHA"
+          }
+
+      - name: Create draft and upload only the signed MSI
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -251,6 +388,79 @@ jobs:
 
           Privacy policy: https://github.com/getchunes/chunes/blob/main/PRIVACY.md
 
-          The only binary attached to this release was signed by SignPath and verified as published by SignPath Foundation before publication.
+          The only binary attached to this release is the Chunes MSI. Before publication, both the outer MSI and its embedded Chunes.exe were independently verified as Windows-trusted Authenticode signed by exactly SignPath Foundation.
+
+          SHA-256: $env:SIGNED_SHA256
+
+          This release's asset and tag become immutable when the draft is published.
           "@
-          gh release create $tag $env:SIGNED_MSI --target $env:GITHUB_SHA --title "Chunes $env:RELEASE_VERSION" --generate-notes --notes $notes
+          gh release create $tag --verify-tag --draft --title "Chunes $env:RELEASE_VERSION" --generate-notes --notes $notes
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not create the draft signed release"
+          }
+          gh release upload $tag $env:SIGNED_MSI
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not upload the signed MSI without clobbering"
+          }
+
+      - name: Verify draft asset and GitHub digest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $apiVersion = "2026-03-10"
+          $tag = "v$env:RELEASE_VERSION"
+          $releaseIds = @(gh api --paginate -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == `"$tag`") | .id")
+          if ($LASTEXITCODE -ne 0 -or $releaseIds.Count -ne 1) {
+            throw "Expected exactly one draft release for $tag"
+          }
+          $release = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/$($releaseIds[0])" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $release.draft -ne $true -or $release.prerelease -ne $false -or $release.tag_name -cne $tag) {
+            throw "Release is not the expected stable draft"
+          }
+          if ($release.assets.Count -ne 1) {
+            throw "Draft release must have exactly one asset"
+          }
+          $asset = $release.assets[0]
+          $expectedName = "Chunes-$env:RELEASE_VERSION-x64.msi"
+          $expectedDigest = "sha256:$env:SIGNED_SHA256"
+          if ($asset.name -cne $expectedName -or $asset.state -cne "uploaded" -or $asset.digest -cne $expectedDigest) {
+            throw "GitHub's uploaded asset digest or identity does not match the signed MSI"
+          }
+          "RELEASE_ID=$($release.id)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Reverify tag immediately before publishing latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $apiVersion = "2026-03-10"
+          $tag = "v$env:RELEASE_VERSION"
+          $ref = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $ref.ref -cne "refs/tags/$tag" -or $ref.object.type -cne "commit" -or $ref.object.sha -cne $env:GITHUB_SHA) {
+            throw "Release tag changed before publication"
+          }
+          gh release edit $tag --verify-tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not publish $tag as latest"
+          }
+
+      - name: Require immutable published release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $apiVersion = "2026-03-10"
+          $tag = "v$env:RELEASE_VERSION"
+          $release = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $release.id -ne [long]$env:RELEASE_ID -or $release.draft -ne $false -or $release.prerelease -ne $false -or $release.immutable -ne $true) {
+            throw "Published release did not become immutable"
+          }
+          $expectedName = "Chunes-$env:RELEASE_VERSION-x64.msi"
+          if ($release.assets.Count -ne 1 -or $release.assets[0].name -cne $expectedName -or $release.assets[0].digest -cne "sha256:$env:SIGNED_SHA256") {
+            throw "Immutable release asset changed"
+          }
+          $latest = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/latest" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $latest.id -ne $release.id) {
+            throw "$tag was not published as the latest release"
+          }

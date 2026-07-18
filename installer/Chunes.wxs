@@ -223,6 +223,99 @@
       <DialogRef Id="VerifyReadyDlg" />
       <DialogRef Id="WelcomeDlg" />
 
+      <!-- v1.0.0-only first-install warning; remove during the v1.0.1 conversion. -->
+      <Dialog
+        Id="UnsignedWarningDlg"
+        Width="370"
+        Height="270"
+        Title="Chunes setup">
+        <Control
+          Id="Next"
+          Type="PushButton"
+          X="236"
+          Y="243"
+          Width="56"
+          Height="17"
+          Default="yes"
+          Text="Next" />
+        <Control
+          Id="Back"
+          Type="PushButton"
+          X="180"
+          Y="243"
+          Width="56"
+          Height="17"
+          Text="Back" />
+        <Control
+          Id="Cancel"
+          Type="PushButton"
+          X="304"
+          Y="243"
+          Width="56"
+          Height="17"
+          Cancel="yes"
+          Text="Cancel">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+        <Control
+          Id="Title"
+          Type="Text"
+          X="15"
+          Y="6"
+          Width="300"
+          Height="18"
+          Transparent="yes"
+          NoPrefix="yes"
+          Text="{\WixUI_Font_Title}UNSIGNED INTERIM v1.0.0" />
+        <Control
+          Id="Description"
+          Type="Text"
+          X="25"
+          Y="23"
+          Width="320"
+          Height="15"
+          Transparent="yes"
+          NoPrefix="yes"
+          Text="Read this warning before installing Chunes." />
+        <Control
+          Id="BannerBitmap"
+          Type="Bitmap"
+          X="0"
+          Y="0"
+          Width="370"
+          Height="44"
+          TabSkip="no"
+          Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control
+          Id="UnsignedText"
+          Type="Text"
+          X="20"
+          Y="63"
+          Width="330"
+          Height="62"
+          NoPrefix="yes"
+          Text="Chunes v1.0.0 is intentionally unsigned. Windows will say Unknown publisher. Install it only if it came from the immutable v1.0.0 GitHub release and you verified the downloaded MSI against that release's SHA-256 digest." />
+        <Control
+          Id="ReleaseLink"
+          Type="Hyperlink"
+          X="20"
+          Y="133"
+          Width="330"
+          Height="18"
+          Text="&lt;a href=&quot;https://github.com/getchunes/chunes/releases/tag/v1.0.0&quot;&gt;Open the immutable Chunes v1.0.0 GitHub release&lt;/a&gt;" />
+        <Control
+          Id="FutureUpdateText"
+          Type="Text"
+          X="20"
+          Y="164"
+          Width="330"
+          Height="45"
+          NoPrefix="yes"
+          Text="Chunes remains fail-closed for updates. Every future MSI downloaded by Chunes must pass Windows trust and identify exactly SignPath Foundation before it can be installed." />
+      </Dialog>
+
       <Dialog
         Id="UpdateSettingsDlg"
         Width="370"
@@ -359,12 +452,28 @@
         Dialog="WelcomeDlg"
         Control="Next"
         Event="NewDialog"
-        Value="InstallDirDlg">NOT Installed</Publish>
+        Value="UnsignedWarningDlg">NOT Installed AND NOT WIX_UPGRADE_DETECTED</Publish>
+      <Publish
+        Dialog="WelcomeDlg"
+        Control="Next"
+        Event="NewDialog"
+        Value="InstallDirDlg">NOT Installed AND WIX_UPGRADE_DETECTED</Publish>
       <Publish
         Dialog="WelcomeDlg"
         Control="Next"
         Event="NewDialog"
         Value="VerifyReadyDlg">Installed AND PATCH</Publish>
+
+      <Publish
+        Dialog="UnsignedWarningDlg"
+        Control="Back"
+        Event="NewDialog"
+        Value="WelcomeDlg">1</Publish>
+      <Publish
+        Dialog="UnsignedWarningDlg"
+        Control="Next"
+        Event="NewDialog"
+        Value="InstallDirDlg">1</Publish>
 
       <Publish
         Dialog="InstallDirDlg"

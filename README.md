@@ -17,7 +17,7 @@ playback pauses, and labels both supported services correctly.
 
 1. Download `Chunes-<version>-x64.msi` from the
    [latest release](https://github.com/getchunes/chunes/releases/latest).
-2. Confirm that Windows reports the MSI publisher as **SignPath Foundation**.
+2. Check the release-specific trust information below before running the MSI.
 3. Run the per-user installer. It does not require administrator access and
    adds a Chunes shortcut to the Start menu.
 4. Review the installer update and online-artwork options and the
@@ -30,6 +30,32 @@ Run a newer MSI to upgrade Chunes or rerun the current MSI to repair it. Windows
 **Installed apps** can uninstall Chunes. New MSI releases use a stable
 UpgradeCode, restore a custom installation directory, and preserve existing
 automatic-update and artwork opt-outs during upgrades.
+
+### v1.0.0 unsigned interim
+
+Chunes v1.0.0 is the sole intentionally unsigned Chunes MSI. SignPath
+Foundation approval was still pending for this interim release, so Windows
+reports **Unknown publisher**. Obtain `Chunes-1.0.0-x64.msi` only from the
+immutable [v1.0.0 GitHub release](https://github.com/getchunes/chunes/releases/tag/v1.0.0).
+The release title and notes prominently identify it as **UNSIGNED INTERIM**.
+
+GitHub locks the published v1.0.0 asset and tag against replacement. Compare
+the local hash with both the SHA-256 printed in the release notes and the
+`sha256:` asset digest shown by GitHub:
+
+```powershell
+(Get-FileHash .\Chunes-1.0.0-x64.msi -Algorithm SHA256).Hash.ToLowerInvariant()
+```
+
+A match confirms that the downloaded bytes are the bytes in that immutable
+GitHub release. It does not provide Authenticode publisher identity, prove that
+the code is safe, or turn the unsigned MSI into a signed one.
+
+Chunes v1.0.1 will be the first signed release. Every official v1.0.1 and later
+MSI must have a Windows-trusted Authenticode signature whose publisher is
+exactly **SignPath Foundation**. Releases are immutable: v1.0.0 is never
+replaced or retagged, and any fix or signing transition is published under a
+new version.
 
 ## How it works
 
@@ -89,10 +115,11 @@ local and network data flow and the corresponding opt-outs.
 
 ## Update security
 
-Chunes 1.0.0 checks only the latest stable release in
-`getchunes/chunes`. Before starting `msiexec`, the updater requires:
+Chunes checks only the latest stable release in `getchunes/chunes`. Before
+starting `msiexec`, the updater requires:
 
 - a strictly newer stable semantic version
+- an immutable GitHub release
 - exactly one asset named `Chunes-<version>-x64.msi`
 - a byte-for-byte match with the SHA-256 digest returned by GitHub's release API
 - a Windows-trusted Authenticode signature whose publisher is exactly
@@ -109,6 +136,12 @@ be replaced. The helper waits for Chunes to stop, repeats the hash, signature,
 publisher, and MSI identity checks, waits for Windows Installer, then relaunches
 the installed app. Cancellation or failure attempts to relaunch the unchanged
 previous executable instead.
+
+The v1.0.0 installer being unsigned does not create an updater exception.
+Unsigned v1.0.0 remains fail-closed and will download or install only a newer
+MSI that passes the immutable-release, digest, exact identity, Windows trust,
+and exact **SignPath Foundation** publisher checks. There is no unsigned update
+bypass.
 
 ## Configuration
 
@@ -154,29 +187,42 @@ requires its fixed SHA-256 before use:
 .\scripts\build.ps1
 ```
 
-The outputs are `dist\Chunes.exe` and `dist\Chunes-1.0.0-x64.msi`. The
-PyInstaller spec embeds file/product version 1.0.0, the canonical executable
-icon, and the canonical tray PNG. Runtime asset loading resolves through
-PyInstaller's extraction directory when frozen.
+The outputs are `dist\Chunes.exe` and `dist\Chunes-<version>-x64.msi`. The
+PyInstaller spec embeds the current `version.py` value as four-part file and
+product metadata, plus the canonical executable icon and tray PNG. Runtime
+asset loading resolves through PyInstaller's extraction directory when frozen.
 
 ## Release process
 
-`.github/workflows/release.yml` runs only by explicit workflow dispatch from
-`main` and refuses a version whose release tag already exists. Separate jobs
-build without secrets, sign in the `code-signing` environment, and publish with
-`contents: write` only in the `stable-release` environment. External actions
-are pinned to resolved full commit SHAs, checkout credentials are not persisted,
-and the unsigned and signed handoff artifacts expire after one day. Both signed
-artifact handoffs are checked again before publication.
+`.github/workflows/unsigned-v1.0.0.yml` is the one-time historical exception.
+It can run only by manual dispatch from `main`, hard-codes v1.0.0, builds and
+tests without signing secrets, proves both raw outputs are `NotSigned`, and
+publishes only through the protected `unsigned-v1-interim` environment. It
+refuses any existing v1.0.0 release or tag. It never deletes or replaces either.
 
-The existing zero-download `v1.0.0` release and tag are intentionally removed
-manually only when the reviewed source is on `main`, SignPath secrets and both
-GitHub environments are ready, and the final recreation is about to run. Then
-dispatch version `1.0.0` with `confirm_v1_recreation` checked. The workflow never
-deletes a release or tag itself and still fails if either tag is present. Do not
-remove the current release early. Required SignPath secrets are
-`SIGNPATH_API_TOKEN`, `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`, and
-`SIGNPATH_SIGNING_POLICY_SLUG`.
+`.github/workflows/release.yml` is the stable signed path for v1.0.1 and later.
+It runs only by explicit workflow dispatch from `main`. Separate jobs build
+without secrets, sign in the `code-signing` environment, and publish with
+`contents: write` only in the `stable-release` environment. There is no unsigned
+bypass. Before publication, the workflow independently verifies Windows trust,
+the exact SignPath Foundation publisher, MSI identity, and the embedded
+`Chunes.exe` signature and metadata after SignPath output and after the artifact
+handoff.
+
+Repository release immutability is enabled and must be independently confirmed
+by a maintainer before either workflow is dispatched; GitHub's scoped workflow
+token cannot read that administrator-only setting. Both workflows require an
+unused release and tag, an exact tag ref at the dispatched `GITHUB_SHA`, a draft
+containing only the expected MSI, and a GitHub asset digest matching the local
+SHA-256. They recheck the tag immediately before publishing as latest and fail
+unless the published release reports `immutable: true`. External actions are
+pinned to resolved full commit SHAs, checkout credentials are not persisted,
+and handoff artifacts expire after one day without compression. Published
+releases are never recreated; corrections always use a new version.
+
+The signed path requires `SIGNPATH_API_TOKEN`, `SIGNPATH_ORGANIZATION_ID`,
+`SIGNPATH_PROJECT_SLUG`, and `SIGNPATH_SIGNING_POLICY_SLUG` as protected
+`code-signing` environment secrets.
 
 The SignPath artifact configuration and account setup checklist are under
 [`.signpath/`](.signpath/README.md). The configuration deep-signs the embedded
@@ -185,8 +231,11 @@ the Chunes product and version metadata.
 
 ## Code signing policy
 
-Free code signing provided by [SignPath.io](https://about.signpath.io),
-certificate by [SignPath Foundation](https://signpath.org).
+Beginning with v1.0.1, free code signing is provided by
+[SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org). The intentionally unsigned v1.0.0
+interim MSI is the only exception to this binary-signing policy; its updater
+still accepts only SignPath Foundation-signed future MSI updates.
 
 - Authors and committers: [@dubsector](https://github.com/dubsector)
 - Reviewers: [@dubsector](https://github.com/dubsector)

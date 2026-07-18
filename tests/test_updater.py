@@ -14,6 +14,7 @@ def release(version="1.1.0", **overrides):
         "tag_name": f"v{version}",
         "draft": False,
         "prerelease": False,
+        "immutable": True,
         "assets": [
             {
                 "name": filename,
@@ -33,16 +34,25 @@ def release(version="1.1.0", **overrides):
 
 class ReleaseSelectionTests(unittest.TestCase):
     def test_selects_exact_msi_from_newer_stable_release(self):
-        asset = updater.select_release_asset(release(), current="1.0.0")
-        self.assertEqual(asset.version, "1.1.0")
-        self.assertEqual(asset.filename, "Chunes-1.1.0-x64.msi")
+        asset = updater.select_release_asset(release("1.0.1"), current="1.0.0")
+        self.assertEqual(asset.version, "1.0.1")
+        self.assertEqual(asset.filename, "Chunes-1.0.1-x64.msi")
         self.assertEqual(asset.sha256, "ab" * 32)
         self.assertEqual(asset.size, 1234)
 
     def test_returns_none_when_current_is_latest(self):
         self.assertIsNone(
-            updater.select_release_asset(release("1.0.0"), current="1.0.0")
+            updater.select_release_asset(
+                release("1.0.0", immutable=False), current="1.0.0"
+            )
         )
+
+    def test_rejects_newer_mutable_release(self):
+        for immutable in (False, None):
+            with self.subTest(immutable=immutable):
+                candidate = release("1.0.1", immutable=immutable)
+                with self.assertRaisesRegex(ValueError, "not immutable"):
+                    updater.select_release_asset(candidate, current="1.0.0")
 
     def test_rejects_prereleases_drafts_and_unstable_versions(self):
         values = [
@@ -100,6 +110,21 @@ class ReleaseSelectionTests(unittest.TestCase):
 
 
 class ReleaseFetchTests(unittest.TestCase):
+    def test_release_check_uses_api_version_with_immutable_field(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.geturl.return_value = updater.LATEST_RELEASE_URL
+        response.read.return_value = b"{}"
+
+        with mock.patch.object(
+            updater.urllib.request, "urlopen", return_value=response
+        ) as urlopen:
+            self.assertEqual(updater.fetch_latest_release(), {})
+
+        request = urlopen.call_args.args[0]
+        headers = {name.lower(): value for name, value in request.header_items()}
+        self.assertEqual(headers["x-github-api-version"], "2026-03-10")
+
     def test_release_check_rejects_an_off_github_redirect(self):
         response = mock.MagicMock()
         response.__enter__.return_value = response
@@ -304,6 +329,12 @@ class InstallerVerificationTests(unittest.TestCase):
 
 
 class UpdateControllerTests(unittest.TestCase):
+    def test_update_prompt_states_signpath_verification_requirement(self):
+        asset = mock.Mock(version="1.0.1")
+        with mock.patch.object(updater, "_message", return_value=6) as message:
+            self.assertTrue(updater._ask_download(asset))
+        self.assertIn("SignPath Foundation verification", message.call_args.args[0])
+
     def test_pending_automatic_check_rechecks_opt_out_before_network(self):
         with (
             mock.patch.object(updater.time, "sleep"),

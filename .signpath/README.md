@@ -1,61 +1,69 @@
-# SignPath Setup
+# SignPath Setup and v1.0.1 Conversion
 
 Chunes targets the free SignPath Foundation open-source code-signing program.
-The public repository, Apache-2.0 license, privacy policy, code-signing policy,
-GitHub-hosted release workflow, protected `main` branch, and existing Windows
-release provide the application prerequisites.
+The intentionally unsigned v1.0.0 interim release must remain unchanged forever.
+Do not delete, recreate, retag, or replace its MSI after publication. The first
+signed release is v1.0.1.
 
-## Apply
+## SignPath Setup
 
-1. Apply at https://signpath.org/apply using this repository and its existing
-   `v1.0.0` Windows release.
-2. Install the SignPath GitHub App for `getchunes/chunes` when requested.
-3. Create the SignPath project and upload `artifact-configuration.xml` as its
-   default artifact configuration.
+1. Complete the SignPath Foundation application for `getchunes/chunes`.
+2. Install the SignPath GitHub App for the repository when approval permits it.
+3. Create the SignPath project, upload `artifact-configuration.xml`, and select
+   it as the default artifact configuration.
 4. Create a release signing policy that uses the SignPath Foundation
    Authenticode certificate and requires manual approval.
-5. Record the SignPath organization ID, project slug, signing policy slug, and
-   submitter API token.
+5. Protect the `code-signing` environment and set these four environment
+   secrets: `SIGNPATH_API_TOKEN`, `SIGNPATH_ORGANIZATION_ID`,
+   `SIGNPATH_PROJECT_SLUG`, and `SIGNPATH_SIGNING_POLICY_SLUG`.
+6. Keep `stable-release` separately protected for final publication approval.
 
-## GitHub Environments
-
-The repository has two protected environments:
-
-- `code-signing` requires approval before SignPath receives an artifact.
-- `stable-release` requires a second approval before GitHub publishes it.
-
-Set these secrets on the `code-signing` environment:
-
-- `SIGNPATH_API_TOKEN`
-- `SIGNPATH_ORGANIZATION_ID`
-- `SIGNPATH_PROJECT_SLUG`
-- `SIGNPATH_SIGNING_POLICY_SLUG`
-
-Do not put secret values in this repository, workflow files, logs, issues, or
-release notes.
+Never store secret values in the repository, workflow files, build artifacts,
+logs, issues, pull requests, release notes, or screenshots.
 
 ## Artifact Policy
 
-The artifact configuration accepts only `Chunes-${version}-x64.msi`. SignPath
-must extract and Authenticode-sign the embedded `Chunes.exe`, enforce its Chunes
-name/version/company metadata, rebuild the MSI, and Authenticode-sign the final
-MSI. The workflow independently verifies Windows trust, publisher, MSI product
-identity, UpgradeCode, and SHA-256 before publication.
+The default artifact configuration accepts only
+`Chunes-${version}-x64.msi`. SignPath extracts and Authenticode-signs the
+embedded `Chunes.exe`, enforces its Chunes product, version, company, copyright,
+and original-filename metadata, rebuilds the MSI, and then Authenticode-signs
+the outer MSI. The workflow independently verifies both signatures, the exact
+`SignPath Foundation` publisher, EXE metadata, MSI product identity, UpgradeCode,
+and SHA-256 after signing and again before publication.
 
-## First Signed Release
+## Post-Approval v1.0.1 Runbook
 
-Keep the existing zero-download `v1.0.0` release and tag in place while SignPath
-reviews the project. Once approval, configuration, environment secrets, and the
-reviewed `main` commit are all ready:
+1. Preserve the immutable v1.0.0 release, tag, and MSI forever. Do not use a
+   recreation or replacement process.
+2. Confirm the SignPath GitHub App, default `artifact-configuration.xml`, manual
+   release signing policy, protected environments, all four `code-signing`
+   secrets, and repository release immutability are configured.
+3. Create a pull request that changes `version.py`, the fallback
+   `ProductVersion` in `installer/Chunes.wxs`, and every version tuple/string in
+   `installer/version_info.txt` from 1.0.0 to 1.0.1.
+4. In the same pull request, remove the v1.0.0-only unsigned warning dialog and
+   routing from `installer/Chunes.wxs`, delete
+   `.github/workflows/unsigned-v1.0.0.yml`, and update documentation and tests to
+   describe the completed signed transition.
+5. Preserve installer UpgradeCode
+   `{2DDF67BD-FBDE-4BDF-A090-F1552C2C1330}` exactly so v1.0.1 upgrades v1.0.0.
+6. Merge only through the protected pull-request path after Windows CI and
+   CodeQL pass on the reviewed conversion.
+7. From the merged `main` commit, manually dispatch `Sign and release` with
+   version `1.0.1`. Never publish an unsigned v1.0.1 artifact.
+8. Approve the protected `code-signing` job, then manually approve the SignPath
+   signing request. Review the workflow's outer-MSI and embedded-EXE trust,
+   publisher, identity, metadata, and digest results.
+9. Approve `stable-release` only after every signing verification succeeds. The
+   workflow must create the exact tag at `GITHUB_SHA`, upload the sole MSI to a
+   draft, verify its GitHub digest, and publish it as an immutable latest
+   release.
+10. Download the published v1.0.1 MSI and verify the release's immutable badge
+    and asset digest, the outer MSI signature, the extracted and installed
+    `Chunes.exe` signature and metadata, a clean per-user installation, and an
+    in-place upgrade from the immutable v1.0.0 MSI.
 
-1. Confirm both current release assets still have zero downloads.
-2. Delete the old `v1.0.0` release and tag.
-3. Immediately dispatch `Sign and release` from `main` with version `1.0.0` and
-   `confirm_v1_recreation` checked.
-4. Approve the `code-signing` environment and the SignPath request.
-5. After signature verification passes, approve `stable-release`.
-6. Verify the published MSI from a clean Windows account before directing users
-   to it.
-
-If signing fails, do not publish the unsigned MSI and do not remove the existing
-release early.
+Both the outer MSI and embedded or installed EXE must be Windows-trusted and
+identify exactly `SignPath Foundation`. If any check fails, do not publish or
+distribute v1.0.1; fix the source or SignPath configuration through a new pull
+request and rerun the signed workflow without weakening its checks.

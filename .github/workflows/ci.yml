@@ -52,10 +52,39 @@ jobs:
       - name: Verify build metadata
         shell: pwsh
         run: |
-          $exe = Get-Item -LiteralPath "dist\Chunes.exe"
-          if ($exe.VersionInfo.ProductVersion -ne "1.0.0.0") {
-            throw "Unexpected executable version: $($exe.VersionInfo.ProductVersion)"
+          $version = (python -c "from version import __version__; print(__version__)").Trim()
+          if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "version.py does not contain a stable semantic version"
           }
-          if (-not (Test-Path -LiteralPath "dist\Chunes-1.0.0-x64.msi")) {
-            throw "Versioned MSI was not produced"
+          $fileVersion = "$version.0"
+          $exe = Get-Item -LiteralPath "dist\Chunes.exe"
+          $expectedMetadata = @{
+            ProductName = "Chunes"
+            ProductVersion = $fileVersion
+            FileVersion = $fileVersion
+            CompanyName = "Chunes"
+            OriginalFilename = "Chunes.exe"
+          }
+          foreach ($name in $expectedMetadata.Keys) {
+            if ($exe.VersionInfo.$name -cne $expectedMetadata[$name]) {
+              throw "Unexpected executable $name`: $($exe.VersionInfo.$name)"
+            }
+          }
+
+          $msi = "dist\Chunes-$version-x64.msi"
+          if (-not (Test-Path -LiteralPath $msi -PathType Leaf)) {
+            throw "Expected MSI was not produced: $msi"
+          }
+          $env:CHUNES_CI_VERSION = $version
+          $env:CHUNES_CI_MSI = (Resolve-Path -LiteralPath $msi).Path
+          python -c "import os; from updater import verify_msi_identity; verify_msi_identity(os.environ['CHUNES_CI_MSI'], os.environ['CHUNES_CI_VERSION'])"
+          if ($LASTEXITCODE -ne 0) {
+            throw "MSI identity verification failed"
+          }
+
+          foreach ($path in @($exe.FullName, $env:CHUNES_CI_MSI)) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $path
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+              throw "Normal CI output must be unsigned: $path ($($signature.Status))"
+            }
           }

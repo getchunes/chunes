@@ -256,6 +256,8 @@ def select_release_asset(release, current=__version__):
     version = ".".join(str(part) for part in version_tuple)
     if version_tuple <= parse_version(current):
         return None
+    if release.get("immutable") is not True:
+        raise ValueError("newer release is not immutable")
 
     expected_name = asset_filename(version)
     assets = release.get("assets")
@@ -312,7 +314,7 @@ def fetch_latest_release():
         LATEST_RELEASE_URL,
         headers={
             "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
+            "X-GitHub-Api-Version": "2026-03-10",
             "User-Agent": f"Chunes/{__version__}",
         },
     )
@@ -649,6 +651,8 @@ def _message(text, flags):
 def _ask_download(asset):
     result = _message(
         f"Chunes {asset.version} is available.\n\n"
+        "This future update must pass SignPath Foundation verification "
+        "before Chunes will install it.\n\n"
         "Download and install the update now?",
         0x00000004 | 0x00000020 | 0x00000100,
     )
