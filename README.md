@@ -21,7 +21,7 @@ publishes the status.
    it. A purple note icon appears in your tray. Right click it to make Chunes
    start with Windows.
 2. Install the companion browser extension,
-   [Chunes Helper](https://github.com/getchunes/chunes-extension) (Chrome,
+   [Chune ID](https://github.com/getchunes/chunes-extension) (Chrome,
    Brave, Edge). It lets Chunes tell SoundCloud apart from a regular YouTube
    video, since Windows only reports "your browser is playing something".
    Without it Chunes still works, but YouTube videos may show up as music.
