@@ -29,7 +29,10 @@ class CanonicalAssetTests(unittest.TestCase):
         }
         for relative, digest in expected.items():
             with self.subTest(relative=relative):
-                actual = hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+                contents = (ROOT / relative).read_bytes()
+                if relative.endswith(".svg"):
+                    contents = contents.replace(b"\r\n", b"\n")
+                actual = hashlib.sha256(contents).hexdigest()
                 self.assertEqual(actual, digest)
 
 
