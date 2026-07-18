@@ -1,6 +1,6 @@
 {
-  "client_id": "PASTE_YOUR_APP_ID_HERE",
-  "sources": ["Brave", "chrome", "msedge", "firefox"],
-  "service_label": "SoundCloud",
+  "client_id": "1527834085383213106",
+  "sources": ["Brave", "chrome", "msedge", "firefox", "opera", "vivaldi"],
+  "service_label": "",
   "image_key": ""
 }

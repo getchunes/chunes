@@ -11,6 +11,7 @@ import json
 import re
 import struct
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -23,13 +24,25 @@ from winrt.windows.media.control import (
     GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
 )
 
+import protocol
+import settings
+
 # Track titles can contain emoji etc. that the default cp1252 console
 # encoding can't represent.
 if sys.stdout:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
+CONFIG_PATH = (
+    Path(sys.executable).parent
+    if getattr(sys, "frozen", False)
+    else Path(__file__).parent
+) / "config.json"
 POLL_SECONDS = 5
+RPC_FRAME = 1
+RPC_CLOSE = 2
+RPC_PING = 3
+RPC_PONG = 4
+MAX_RPC_FRAME_BYTES = 1024 * 1024
 
 DEFAULT_CONFIG = {
     "client_id": "1527834085383213106",
@@ -38,94 +51,189 @@ DEFAULT_CONFIG = {
     "image_key": "",
 }
 
-# Live state for the tray app: current track description or None.
-status = {"track": None}
+# Live state for the tray app.
+status = {"track": None, "extension_enabled": None}
+_status_lock = threading.Lock()
+
+
+def set_status(**values):
+    with _status_lock:
+        status.update(values)
+
+
+def status_snapshot():
+    with _status_lock:
+        return dict(status)
 
 
 async def _read_output(self):
-    """Replacement for pypresence's read_output that tolerates non-response
-    frames on the IPC pipe (the stock version does payload["evt"] and raises
-    KeyError on anything that isn't a command response)."""
+    """Read the next Discord command response while servicing IPC control frames."""
     while True:
         try:
             preamble = await asyncio.wait_for(
-                self.sock_reader.read(8), self.response_timeout
+                self.sock_reader.readexactly(8), self.response_timeout
             )
             status_code, length = struct.unpack("<II", preamble[:8])
+            if length > MAX_RPC_FRAME_BYTES:
+                raise _base.PipeClosed
             data = await asyncio.wait_for(
-                self.sock_reader.read(length), self.response_timeout
+                self.sock_reader.readexactly(length), self.response_timeout
             )
-        except (BrokenPipeError, struct.error):
-            raise _base.PipeClosed
         except asyncio.TimeoutError:
             raise _base.ResponseTimeout
-        payload = json.loads(data.decode("utf-8"))
-        if payload.get("evt") == "ERROR":
-            raise _base.ServerError(payload["data"]["message"])
-        if "evt" not in payload:
-            print(f"Ignoring non-response frame (op {status_code}): {payload}")
+        except (
+            ConnectionError,
+            OSError,
+            asyncio.IncompleteReadError,
+            struct.error,
+        ):
+            raise _base.PipeClosed
+
+        try:
+            payload = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _base.PipeClosed from exc
+
+        if status_code == RPC_CLOSE:
+            raise _base.PipeClosed
+        if status_code == RPC_PING:
+            self.send_data(RPC_PONG, payload)
             continue
-        return payload
+        if status_code == RPC_PONG:
+            continue
+        if status_code != RPC_FRAME or not isinstance(payload, dict):
+            raise _base.PipeClosed
+
+        if payload.get("evt") == "ERROR":
+            data = payload.get("data")
+            message = data.get("message") if isinstance(data, dict) else None
+            if not isinstance(message, str) or not message:
+                message = "Discord RPC error"
+            raise _base.ServerError(message)
+        # Command responses are identified by their nonce; evt is optional and
+        # commonly absent or null. Nonce-less DISPATCH events are unrelated to
+        # the outstanding SET_ACTIVITY request and must not satisfy it.
+        if isinstance(payload.get("cmd"), str) and isinstance(
+            payload.get("nonce"), str
+        ):
+            return payload
+        print(f"Ignoring Discord event while awaiting a response: {payload}")
 
 
 _base.BaseClient.read_output = _read_output
 
 
 TAB_REPORT_PORT = 52846
-BLOCKED_HOSTS = {"www.youtube.com", "youtube.com", "m.youtube.com"}
-SERVICE_LABELS = {
-    "soundcloud.com": "SoundCloud",
-    "music.youtube.com": "YouTube Music",
-}
-
 # Latest audible-tab report from the browser extension: which sites are
 # actually making sound. Windows only tells us "Brave", so without this we
 # can't tell SoundCloud from a regular YouTube video.
-_tab_state = {"time": 0.0, "tabs": []}
+_tab_state = {
+    "enabled": False,
+    "services": {"soundcloud": False, "youtubeMusic": False},
+    "tabs": [],
+}
+_tab_reported_at = 0.0
+
+
+def _fresh_tab_report():
+    if protocol.report_is_fresh(_tab_reported_at):
+        set_status(extension_enabled=_tab_state["enabled"])
+        return _tab_state
+    set_status(extension_enabled=None)
+    return None
+
+
+def _http_reply(status, body=b""):
+    reasons = {
+        200: "OK",
+        204: "No Content",
+        400: "Bad Request",
+        403: "Forbidden",
+        404: "Not Found",
+        405: "Method Not Allowed",
+        411: "Length Required",
+        413: "Content Too Large",
+        415: "Unsupported Media Type",
+        431: "Request Header Fields Too Large",
+        500: "Internal Server Error",
+    }
+    headers = [
+        f"HTTP/1.1 {status} {reasons[status]}",
+        "Connection: close",
+        "Cache-Control: no-store",
+        "X-Content-Type-Options: nosniff",
+        f"Content-Length: {len(body)}",
+    ]
+    if 200 <= status < 300:
+        headers.append(f"X-Chunes-Protocol: {protocol.PROTOCOL_VERSION}")
+    if body:
+        headers.append("Content-Type: application/json")
+    return ("\r\n".join(headers) + "\r\n\r\n").encode("ascii") + body
 
 
 async def _handle_tab_report(reader, writer):
-    reply = b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
+    global _tab_reported_at
+    reply = _http_reply(500)
     try:
-        raw = await asyncio.wait_for(reader.read(65536), 5)
-        if raw.startswith(b"GET /state"):
-            state = json.dumps(_tab_state).encode()
-            reply = (b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
-                     b"Content-Length: %d\r\nConnection: close\r\n\r\n%s"
-                     % (len(state), state))
+        raw_head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
+        request = protocol.parse_request_head(raw_head[:-4])
+        if request.action == "state":
+            fresh = protocol.report_is_fresh(_tab_reported_at)
+            state = protocol.safe_public_state(_tab_state, fresh)
+            body = json.dumps(state, separators=(",", ":")).encode()
+            reply = _http_reply(200, body)
         else:
-            body = raw.split(b"\r\n\r\n", 1)
-            if len(body) == 2 and body[1]:
-                tabs = json.loads(body[1])
-                hosts = sorted({t.get("host", "") for t in tabs})
-                old = sorted({t.get("host", "") for t in _tab_state["tabs"]})
-                if _tab_state["time"] == 0 or hosts != old:
-                    print(f"Extension report: audible hosts = {hosts}")
-                _tab_state["tabs"] = tabs
-                _tab_state["time"] = time.time()
-    except Exception:
-        pass
+            body = await asyncio.wait_for(
+                reader.readexactly(request.content_length), 5
+            )
+            report = protocol.parse_report_body(body)
+            hosts = sorted({tab["host"] for tab in report["tabs"]})
+            old_hosts = sorted({tab["host"] for tab in _tab_state["tabs"]})
+            if (
+                not _tab_reported_at
+                or hosts != old_hosts
+                or report["enabled"] != _tab_state["enabled"]
+            ):
+                print(
+                    f"Extension report: enabled={report['enabled']}, "
+                    f"audible hosts={hosts}"
+                )
+            _tab_state.clear()
+            _tab_state.update(report)
+            _tab_reported_at = time.time()
+            set_status(extension_enabled=report["enabled"])
+            reply = _http_reply(204)
+    except protocol.ProtocolError as exc:
+        reply = _http_reply(exc.status)
+    except (
+        asyncio.IncompleteReadError,
+        asyncio.LimitOverrunError,
+        asyncio.TimeoutError,
+    ):
+        reply = _http_reply(400)
+    except Exception as exc:
+        print(f"Extension request failed: {type(exc).__name__}: {exc}")
     try:
         writer.write(reply)
         await writer.drain()
         writer.close()
-    except Exception:
+        await writer.wait_closed()
+    except (ConnectionError, OSError):
         pass
 
 
-def fallback_track():
+def fallback_track(report):
     """When Windows' media session is unusable (e.g. a blocked YouTube video
     holds the browser's only media slot), build track info from the audible
     music tab's title. No playback position is available this way."""
-    if time.time() - _tab_state["time"] > 90:
-        return None
-    for tab in _tab_state["tabs"]:
-        host = tab.get("host") or ""
-        t = (tab.get("title") or "").strip()
-        if host == "soundcloud.com" and " by " in t:
+    for tab in protocol.enabled_tabs(report):
+        host = tab["host"]
+        t = tab["title"].strip()
+        service = protocol.service_for_host(host)
+        if service == "soundcloud" and " by " in t:
             title, artist = t.rsplit(" by ", 1)
             return title.strip(), artist.strip(), host
-        if host == "music.youtube.com":
+        if service == "youtubeMusic":
             t = re.sub(r"\s*-\s*YouTube Music$", "", t)
             if " - " in t:
                 title, artist = t.rsplit(" - ", 1)
@@ -135,17 +243,17 @@ def fallback_track():
     return None
 
 
-def classify_host(title):
+def classify_host(title, report):
     """Match the playing title against audible browser tabs to find which
     site it comes from. None if the extension isn't reporting or no match."""
-    if time.time() - _tab_state["time"] > 90:
+    if not report:
         return None
     tl = title.lower().strip()
     if not tl:
         return None
-    for tab in _tab_state["tabs"]:
-        if tl in (tab.get("title") or "").lower():
-            return tab.get("host") or None
+    for tab in report["tabs"]:
+        if tl in tab["title"].lower():
+            return tab["host"]
     return None
 
 
@@ -264,7 +372,12 @@ async def main():
 
     rpc = AioPresence(client_id)
     await rpc.connect()
-    await asyncio.start_server(_handle_tab_report, "127.0.0.1", TAB_REPORT_PORT)
+    tab_server = await asyncio.start_server(
+        _handle_tab_report,
+        "127.0.0.1",
+        TAB_REPORT_PORT,
+        limit=protocol.MAX_HEADER_BYTES + 4,
+    )
     print("Connected to Discord. Watching for music...")
 
     last = None
@@ -277,6 +390,7 @@ async def main():
         nonlocal rpc, last
         try:
             await coro_factory(rpc)
+            return True
         except Exception as e:
             print(f"RPC hiccup ({type(e).__name__}: {e}), reconnecting...")
             try:
@@ -290,13 +404,14 @@ async def main():
                     # Discord forgot the activity; force a re-send next poll.
                     last = None
                     print("Reconnected to Discord.")
-                    return
+                    return False
                 except Exception:
                     await asyncio.sleep(10)
             print("Could not reconnect to Discord after 10 minutes, exiting.")
             sys.exit(1)
 
     while True:
+        report = _fresh_tab_report()
         try:
             track = await get_playing_track(allowed)
         except OSError:
@@ -305,15 +420,18 @@ async def main():
         host = None
         if track:
             title, artist, pos, dur, source = track
-            host = classify_host(title)
-            if host in BLOCKED_HOSTS:
+            host = classify_host(title, report)
+            if not protocol.browser_track_is_allowed(source, report, host):
                 if last is not None:
-                    print(f"Ignoring {host}: {title[:60]}")
+                    print(
+                        "Ignoring disabled or non-music browser source: "
+                        f"{title[:60]}"
+                    )
                 track = None
         if not track:
             # A blocked video may be hogging the browser's only media
             # session; the extension still knows if a music tab is audible.
-            fb = fallback_track()
+            fb = fallback_track(report)
             if fb:
                 title, artist, host = fb
                 pos, dur, source = 0.0, 0.0, f"tab:{host}"
@@ -330,6 +448,7 @@ async def main():
 
         if track:
             now = time.time()
+            use_artwork = settings.artwork_enabled()
             # Fallback tracks have no position; pin start to 0 so the
             # unchanged check stays stable and no timestamps are sent.
             start = int(now - pos) if dur > 0 else 0
@@ -340,7 +459,7 @@ async def main():
             # Re-send only on track change or a seek (start timestamp moved
             # by more than a few seconds); Discord drops clients that spam
             # SET_ACTIVITY every poll.
-            key = (title, artist)
+            key = (title, artist, host, use_artwork)
             # Re-send periodically even if unchanged: Discord forgets the
             # activity if the client reloads, and we only notice the dead
             # pipe when we next write to it.
@@ -351,10 +470,14 @@ async def main():
                 and now - last[2] < 60
             )
             if not unchanged:
-                if last is None or last[0] != key:
+                if last is None or last[0][:2] != key[:2]:
                     print(f"Now playing: {title} - {artist} ({source})")
-                    status["track"] = f"{title} - {artist}" if artist else title
-                art = await asyncio.to_thread(find_artwork, title, artist)
+                    set_status(
+                        track=f"{title} - {artist}" if artist else title
+                    )
+                art = None
+                if use_artwork:
+                    art = await asyncio.to_thread(find_artwork, title, artist)
                 kwargs = dict(
                     activity_type=ActivityType.LISTENING,
                     details=title[:128],
@@ -365,20 +488,19 @@ async def main():
                     kwargs["end"] = int(start + dur)
                 if art or image_key:
                     kwargs["large_image"] = art or image_key
-                label = SERVICE_LABELS.get(host, service)
+                label = protocol.service_label_for_host(host, service)
                 if label:
                     kwargs["large_text"] = label
-                await send(lambda r: r.update(**kwargs))
-                last = (key, start, now)
+                if await send(lambda r: r.update(**kwargs)):
+                    last = (key, start, now)
         else:
             if last is not None:
                 print("Playback stopped, clearing status.")
                 last = None
-                status["track"] = None
+                set_status(track=None)
                 await send(lambda r: r.clear())
 
         await asyncio.sleep(POLL_SECONDS)
-
 
 if __name__ == "__main__":
     try:
