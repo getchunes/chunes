@@ -42,13 +42,23 @@ class PackagingTests(unittest.TestCase):
         cls.tree = ET.parse(ROOT / "installer" / "Chunes.wxs")
         cls.product = cls.tree.getroot().find("w:Product", WIX_NS)
 
-    def test_all_release_metadata_is_version_1_0_0(self):
-        self.assertEqual(__version__, "1.0.0")
+    def test_release_metadata_is_synchronized_with_version_module(self):
+        self.assertRegex(__version__, r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+        version_parts = tuple(int(part) for part in __version__.split("."))
+        file_version = f"{__version__}.0"
         version_info = (ROOT / "installer" / "version_info.txt").read_text(
             encoding="utf-8"
         )
-        self.assertIn("ProductVersion', '1.0.0.0'", version_info)
-        self.assertIn("FileVersion', '1.0.0.0'", version_info)
+        tuple_text = ", ".join(str(part) for part in (*version_parts, 0))
+        self.assertIn(f"filevers=({tuple_text})", version_info)
+        self.assertIn(f"prodvers=({tuple_text})", version_info)
+        self.assertIn(f"ProductVersion', '{file_version}'", version_info)
+        self.assertIn(f"FileVersion', '{file_version}'", version_info)
+
+        wix = (ROOT / "installer" / "Chunes.wxs").read_text(encoding="utf-8")
+        fallback = re.search(r'<\?define ProductVersion="([^"]+)" \?>', wix)
+        self.assertIsNotNone(fallback)
+        self.assertEqual(fallback.group(1), __version__)
 
     def test_installer_is_per_user_x64_with_stable_upgrade_code(self):
         self.assertEqual(
@@ -110,6 +120,51 @@ class PackagingTests(unittest.TestCase):
                     f"w:CustomAction[@Id='{action_id}']", WIX_NS
                 )
                 self.assertEqual(custom.attrib["Value"], "0")
+
+    def test_v1_unsigned_warning_is_visible_only_on_first_install(self):
+        warning = self.product.find(
+            ".//w:Dialog[@Id='UnsignedWarningDlg']", WIX_NS
+        )
+        self.assertIsNotNone(warning)
+        text = " ".join(
+            control.attrib.get("Text", "")
+            for control in warning.findall("w:Control", WIX_NS)
+        )
+        for required in (
+            "UNSIGNED INTERIM v1.0.0",
+            "intentionally unsigned",
+            "Unknown publisher",
+            "immutable v1.0.0 GitHub release",
+            "SignPath Foundation",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, text)
+
+        content = [
+            warning.find(f"w:Control[@Id='{control_id}']", WIX_NS)
+            for control_id in ("UnsignedText", "ReleaseLink", "FutureUpdateText")
+        ]
+        self.assertTrue(all(control is not None for control in content))
+        for first, second in zip(content, content[1:]):
+            self.assertLessEqual(
+                int(first.attrib["Y"]) + int(first.attrib["Height"]),
+                int(second.attrib["Y"]),
+            )
+        self.assertLessEqual(
+            int(content[-1].attrib["Y"]) + int(content[-1].attrib["Height"]),
+            234,
+        )
+
+        routes = self.product.findall(".//w:Publish[@Dialog='WelcomeDlg']", WIX_NS)
+        warning_route = next(
+            route for route in routes if route.attrib.get("Value") == "UnsignedWarningDlg"
+        )
+        upgrade_route = next(
+            route for route in routes if route.attrib.get("Value") == "InstallDirDlg"
+        )
+        self.assertIn("NOT Installed", warning_route.text)
+        self.assertIn("NOT WIX_UPGRADE_DETECTED", warning_route.text)
+        self.assertIn("WIX_UPGRADE_DETECTED", upgrade_route.text)
 
     def test_maintenance_restores_install_path_and_autostart_helpers_are_safe(self):
         search = self.product.find(
@@ -192,6 +247,7 @@ class PackagingTests(unittest.TestCase):
             script,
         )
         self.assertIn("Get-FileHash -Algorithm SHA256", script)
+        self.assertIn('"dark.exe"', script)
 
     def test_explicit_wix_directory_does_not_fall_back_to_path(self):
         script = (ROOT / "scripts" / "build.ps1").read_text(encoding="utf-8")
@@ -207,34 +263,185 @@ class PackagingTests(unittest.TestCase):
             ),
         )
 
-    def test_release_workflow_is_manual_and_publishes_after_signing(self):
+    def test_signed_release_workflow_is_fail_closed_and_immutable(self):
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn("workflow_dispatch:", workflow)
         self.assertNotRegex(workflow, re.compile(r"^\s+push:\s*$", re.MULTILINE))
+        self.assertRegex(workflow, r"default:\s+1\.0\.1")
+        self.assertIn('Signed stable releases begin at v1.0.1', workflow)
+        self.assertNotIn("confirm_v1_recreation", workflow)
+        self.assertNotIn("NotSigned", workflow)
         signing = workflow.index(
             "signpath/github-action-submit-signing-request@"
             "b9d91eadd323de506c0c81cf0c7fe7438f3360fd"
         )
-        tag_check = workflow.index("Require unused release tag")
-        verify = workflow.index("Verify signed release artifact")
-        publish = workflow.index("gh release create")
+        tag_check = workflow.index("Require unused release tag before signing")
+        verify = workflow.index("Verify signed MSI and embedded EXE")
+        publication_verify = workflow.index(
+            "Reverify signed MSI and embedded EXE for publication"
+        )
+        publish = workflow.index("Create draft and upload only the signed MSI")
         self.assertLess(tag_check, signing)
         self.assertLess(signing, verify)
-        self.assertLess(verify, publish)
-        self.assertIn("SignPath Foundation", workflow)
-        self.assertIn("verify_msi_identity", workflow)
-        self.assertIn("confirm_v1_recreation:", workflow)
+        self.assertLess(verify, publication_verify)
+        self.assertLess(publication_verify, publish)
+        self.assertEqual(workflow.count("verify_msi_identity(p"), 2)
+        self.assertEqual(workflow.count("Assert-SignPathSignature $path"), 2)
+        self.assertEqual(
+            workflow.count("Assert-SignPathSignature $embeddedExe.FullName"), 2
+        )
+        self.assertEqual(workflow.count("//w:File[@Name='Chunes.exe']"), 2)
+        self.assertEqual(workflow.count('"File\\ChunesExe"'), 2)
+        self.assertEqual(workflow.count('(Join-Path $env:WIX_BIN "dark.exe")'), 2)
+        self.assertNotIn("msiexec.exe", workflow)
+        for metadata in (
+            "ProductName",
+            "ProductVersion",
+            "FileVersion",
+            "CompanyName",
+            "OriginalFilename",
+        ):
+            with self.subTest(metadata=metadata):
+                self.assertGreaterEqual(workflow.count(metadata), 2)
         self.assertIn("environment: code-signing", workflow)
         self.assertIn("environment: stable-release", workflow)
         self.assertIn("permissions: {}", workflow)
         self.assertGreaterEqual(workflow.count("persist-credentials: false"), 3)
-        actions = re.findall(r"^\s*uses:\s*([^\s#]+)", workflow, re.MULTILINE)
-        self.assertTrue(actions)
-        for action in actions:
-            with self.subTest(action=action):
-                self.assertRegex(action, r"^[^@]+@[0-9a-f]{40}$")
+        self.assertIn("$release.immutable -ne $true", workflow)
+        self.assertIn("releases?per_page=100", workflow)
+        self.assertIn("git/refs", workflow)
+        self.assertIn('sha=$env:GITHUB_SHA', workflow)
+        self.assertIn("--verify-tag --draft", workflow)
+        self.assertIn("$asset.digest -cne $expectedDigest", workflow)
+        self.assertIn("Reverify tag immediately before publishing latest", workflow)
+        self.assertIn("--draft=false --latest", workflow)
+        for forbidden in (
+            "--clobber",
+            "gh release delete",
+            "--method DELETE",
+            "git push --delete",
+        ):
+            self.assertNotIn(forbidden, workflow)
+
+    def test_one_time_unsigned_workflow_has_all_guards(self):
+        workflow = (
+            ROOT / ".github" / "workflows" / "unsigned-v1.0.0.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("inputs:", workflow)
+        self.assertNotRegex(workflow, re.compile(r"^\s+push:\s*$", re.MULTILINE))
+        self.assertIn("RELEASE_VERSION: 1.0.0", workflow)
+        self.assertIn('refs/heads/main', workflow)
+        self.assertIn("group: stable-release", workflow)
+        self.assertIn("permissions: {}", workflow)
+        self.assertRegex(
+            workflow,
+            re.compile(
+                r"build:\s+name:.*?permissions:\s+contents: read", re.DOTALL
+            ),
+        )
+        self.assertIn("environment: unsigned-v1-interim", workflow)
+        self.assertRegex(
+            workflow,
+            re.compile(
+                r"environment: unsigned-v1-interim.*?permissions:\s+"
+                r"actions: read\s+contents: write",
+                re.DOTALL,
+            ),
+        )
+        self.assertIn("--require-hashes --only-binary=:all:", workflow)
+        self.assertIn("python -m unittest discover -s tests -v", workflow)
+        self.assertIn("get-wix.ps1", workflow)
+        self.assertIn('Remove-Item -LiteralPath "build", "dist"', workflow)
+        self.assertIn("ProductVersion = $expectedFileVersion", workflow)
+        self.assertIn("verify_msi_identity", workflow)
+        self.assertIn("@($exe.FullName, $embeddedExe.FullName, $msi)", workflow)
+        self.assertIn(
+            "Unsigned MSI does not contain the exact freshly built Chunes.exe",
+            workflow,
+        )
+        self.assertIn('(Join-Path $env:WIX_BIN "dark.exe")', workflow)
+        self.assertIn("//w:File[@Name='Chunes.exe']", workflow)
+        self.assertGreaterEqual(workflow.count("SignatureStatus]::NotSigned"), 2)
+        self.assertIn("path: dist/Chunes-1.0.0-x64.msi", workflow)
+        self.assertIn("compression-level: 0", workflow)
+        self.assertIn("retention-days: 1", workflow)
+        self.assertIn("unsigned_sha256:", workflow)
+        self.assertIn("releases?per_page=100", workflow)
+        self.assertIn("git/refs", workflow)
+        self.assertIn('sha=$env:GITHUB_SHA', workflow)
+        self.assertIn("--verify-tag --draft", workflow)
+        self.assertIn("$asset.digest -cne $expectedDigest", workflow)
+        self.assertIn("--draft=false --latest", workflow)
+        self.assertIn("$release.immutable -ne $true", workflow)
+        for notice in (
+            "UNSIGNED INTERIM",
+            "UNKNOWN PUBLISHER",
+            "immutable",
+            "SHA-256",
+            "checksum is not Authenticode identity",
+            "v1.0.1",
+            "SignPath Foundation",
+        ):
+            with self.subTest(notice=notice):
+                self.assertIn(notice, workflow)
+        self.assertNotIn("signpath/github-action", workflow)
+        for forbidden in (
+            "--clobber",
+            "gh release delete",
+            "--method DELETE",
+            "git push --delete",
+        ):
+            self.assertNotIn(forbidden, workflow)
+
+    def test_ci_derives_and_verifies_current_unsigned_package_identity(self):
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("1.0.0", workflow)
+        self.assertIn("from version import __version__", workflow)
+        self.assertIn('$fileVersion = "$version.0"', workflow)
+        self.assertIn('dist\\Chunes-$version-x64.msi', workflow)
+        self.assertIn("verify_msi_identity", workflow)
+        self.assertIn("SignatureStatus]::NotSigned", workflow)
+
+    def test_unsigned_transition_documentation_has_no_recreation_path(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        signpath = (ROOT / ".signpath" / "README.md").read_text(encoding="utf-8")
+        combined = "\n".join((readme, security, signpath))
+        for required in (
+            "sole intentionally unsigned",
+            "Unknown publisher",
+            "immutable",
+            "SignPath Foundation",
+            "v1.0.1",
+            "does not accept unsigned updates",
+            "unsigned-v1-interim",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, combined)
+        for obsolete in (
+            "confirm_v1_recreation",
+            "zero-download",
+            "Delete the old `v1.0.0`",
+        ):
+            self.assertNotIn(obsolete, combined)
+        for runbook_item in (
+            "version.py",
+            "installer/Chunes.wxs",
+            "installer/version_info.txt",
+            ".github/workflows/unsigned-v1.0.0.yml",
+            "CodeQL",
+            "UpgradeCode",
+            "clean per-user installation",
+            "in-place upgrade",
+            "Never store secret values",
+        ):
+            with self.subTest(runbook_item=runbook_item):
+                self.assertIn(runbook_item, signpath)
 
     def test_all_workflow_actions_are_full_sha_pinned(self):
         for path in (ROOT / ".github" / "workflows").glob("*.yml"):

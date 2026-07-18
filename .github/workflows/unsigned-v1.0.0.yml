@@ -1,0 +1,340 @@
+name: Publish unsigned v1.0.0 interim (one time)
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: stable-release
+  cancel-in-progress: false
+
+env:
+  RELEASE_VERSION: 1.0.0
+
+jobs:
+  build:
+    name: Build and verify unsigned v1.0.0
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      unsigned_sha256: ${{ steps.verify-unsigned.outputs.sha256 }}
+    steps:
+      - name: Require dispatch from main
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -cne "refs/heads/main") {
+            throw "Unsigned v1.0.0 must be dispatched from main"
+          }
+
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13.14"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-windows-py313.lock
+
+      - name: Require exact v1.0.0 source
+        shell: pwsh
+        run: |
+          $sourceVersion = (python -c "from version import __version__; print(__version__)").Trim()
+          if ($sourceVersion -cne $env:RELEASE_VERSION) {
+            throw "This one-time workflow requires source version 1.0.0, not $sourceVersion"
+          }
+
+      - name: Install hash-locked dependencies
+        run: >-
+          python -m pip install --require-hashes --only-binary=:all:
+          -r requirements-windows-py313.lock
+
+      - name: Test
+        run: |
+          python -m pip check
+          python -m compileall -q chunes.py presence.py protocol.py settings.py updater.py version.py tests
+          python -m unittest discover -s tests -v
+
+      - name: Get hash-locked WiX Toolset
+        shell: pwsh
+        run: |
+          $wixBin = (& .\scripts\get-wix.ps1 -Destination (Join-Path $env:RUNNER_TEMP "wix-3.14.1")).Trim()
+          "WIX_BIN=$wixBin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build from clean output directories
+        shell: pwsh
+        run: |
+          Remove-Item -LiteralPath "build", "dist" -Recurse -Force -ErrorAction SilentlyContinue
+          .\scripts\build.ps1 -WixBin $env:WIX_BIN
+
+      - name: Verify exact unsigned build
+        id: verify-unsigned
+        shell: pwsh
+        run: |
+          $expectedFileVersion = "1.0.0.0"
+          $exe = Get-Item -LiteralPath "dist\Chunes.exe"
+          $expectedMetadata = @{
+            ProductName = "Chunes"
+            ProductVersion = $expectedFileVersion
+            FileVersion = $expectedFileVersion
+            CompanyName = "Chunes"
+            OriginalFilename = "Chunes.exe"
+          }
+          foreach ($name in $expectedMetadata.Keys) {
+            if ($exe.VersionInfo.$name -cne $expectedMetadata[$name]) {
+              throw "Unexpected executable $name`: $($exe.VersionInfo.$name)"
+            }
+          }
+
+          $expectedName = "Chunes-1.0.0-x64.msi"
+          $msiFiles = @(Get-ChildItem -LiteralPath "dist" -File -Filter "*.msi")
+          if ($msiFiles.Count -ne 1 -or $msiFiles[0].Name -cne $expectedName) {
+            throw "Build must produce exactly $expectedName"
+          }
+          $msi = $msiFiles[0].FullName
+          $env:CHUNES_UNSIGNED_MSI = $msi
+          python -c "import os; from updater import verify_msi_identity; verify_msi_identity(os.environ['CHUNES_UNSIGNED_MSI'], '1.0.0')"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unsigned MSI identity verification failed"
+          }
+
+          $extract = Join-Path $env:RUNNER_TEMP "unsigned-v1-msi-extracted"
+          Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $extract | Out-Null
+          & (Join-Path $env:WIX_BIN "dark.exe") -nologo -x $extract -o (Join-Path $extract "package.wxs") $msi
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not safely extract the unsigned MSI"
+          }
+          [xml]$decompiled = Get-Content -LiteralPath (Join-Path $extract "package.wxs") -Raw
+          $namespace = New-Object System.Xml.XmlNamespaceManager($decompiled.NameTable)
+          $namespace.AddNamespace("w", "http://schemas.microsoft.com/wix/2006/wi")
+          $payloads = @($decompiled.SelectNodes("//w:File[@Name='Chunes.exe']", $namespace))
+          if ($payloads.Count -ne 1 -or $payloads[0].Id -cne "ChunesExe") {
+            throw "Unsigned MSI must map exactly one ChunesExe payload to Chunes.exe"
+          }
+          $embeddedExe = Get-Item -LiteralPath (Join-Path $extract "File\ChunesExe")
+          $rawExeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe.FullName).Hash
+          $embeddedExeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $embeddedExe.FullName).Hash
+          if ($embeddedExeHash -cne $rawExeHash) {
+            throw "Unsigned MSI does not contain the exact freshly built Chunes.exe"
+          }
+          foreach ($name in $expectedMetadata.Keys) {
+            if ($embeddedExe.VersionInfo.$name -cne $expectedMetadata[$name]) {
+              throw "Unexpected embedded executable $name`: $($embeddedExe.VersionInfo.$name)"
+            }
+          }
+
+          foreach ($path in @($exe.FullName, $embeddedExe.FullName, $msi)) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $path
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+              throw "v1.0.0 output must be NotSigned: $path ($($signature.Status))"
+            }
+          }
+
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $msi).Hash.ToLowerInvariant()
+          "sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "Unsigned v1.0.0 MSI SHA-256: $hash" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: Upload exact one-day unsigned MSI
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unsigned-v1.0.0-${{ github.run_id }}
+          path: dist/Chunes-1.0.0-x64.msi
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  publish:
+    name: Publish immutable unsigned v1.0.0
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 10
+    environment: unsigned-v1-interim
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Require dispatch from main
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -cne "refs/heads/main") {
+            throw "Unsigned v1.0.0 must be dispatched from main"
+          }
+
+      - name: Check out verification source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13.14"
+          architecture: x64
+
+      - name: Download verified unsigned MSI
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: unsigned-v1.0.0-${{ github.run_id }}
+          path: unsigned-release
+
+      - name: Rehash and reverify publication MSI
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem -LiteralPath "unsigned-release" -Recurse -File)
+          if ($files.Count -ne 1 -or $files[0].Name -cne "Chunes-1.0.0-x64.msi") {
+            throw "Publication input must contain only Chunes-1.0.0-x64.msi"
+          }
+          $msi = $files[0].FullName
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $msi).Hash.ToLowerInvariant()
+          if ($hash -cne "${{ needs.build.outputs.unsigned_sha256 }}") {
+            throw "Unsigned MSI changed between build and publication"
+          }
+          $env:CHUNES_UNSIGNED_MSI = $msi
+          python -c "import os; from updater import verify_msi_identity; verify_msi_identity(os.environ['CHUNES_UNSIGNED_MSI'], '1.0.0')"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Publication MSI identity verification failed"
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $msi
+          if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+            throw "Publication MSI must remain NotSigned, not $($signature.Status)"
+          }
+          "UNSIGNED_MSI=$msi" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "UNSIGNED_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Require unused v1.0.0 identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $apiVersion = "2026-03-10"
+          $tag = "v1.0.0"
+          $releaseIds = @(gh api --paginate -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == `"$tag`") | .id")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not check existing releases"
+          }
+          if ($releaseIds.Count -ne 0) {
+            throw "A release for $tag already exists"
+          }
+
+          git ls-remote --exit-code --tags origin "refs/tags/$tag" | Out-Null
+          $tagCheckExit = $LASTEXITCODE
+          if ($tagCheckExit -eq 0) {
+            throw "Release tag $tag already exists"
+          }
+          if ($tagCheckExit -ne 2) {
+            throw "Could not check whether release tag $tag exists"
+          }
+
+      - name: Atomically create and verify exact tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $apiVersion = "2026-03-10"
+          $tag = "v1.0.0"
+          $fullRef = "refs/tags/$tag"
+          gh api --method POST -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/git/refs" -f "ref=$fullRef" -f "sha=$env:GITHUB_SHA" | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not atomically create $fullRef"
+          }
+          $ref = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $ref.ref -cne $fullRef -or $ref.object.type -cne "commit" -or $ref.object.sha -cne $env:GITHUB_SHA) {
+            throw "Created tag does not point exactly to GITHUB_SHA"
+          }
+
+      - name: Create draft and upload only the unsigned MSI
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v1.0.0"
+          $notes = @"
+          # UNSIGNED INTERIM - UNKNOWN PUBLISHER
+
+          **Chunes v1.0.0 is the sole intentionally unsigned interim MSI. Windows will display Unknown publisher.**
+
+          **SHA-256: $env:UNSIGNED_SHA256**
+
+          The MSI bytes and the v1.0.0 tag are immutable after this release is published. Obtain this MSI only from this GitHub release and compare its SHA-256 with the value above and GitHub's asset digest.
+
+          A matching checksum verifies that downloaded bytes match this immutable GitHub asset. A checksum is not Authenticode identity, does not establish publisher identity, and does not make an unsigned file signed.
+
+          Chunes v1.0.1 will be the first release signed by SignPath Foundation. The updater in this unsigned v1.0.0 remains fail-closed and accepts only future MSI updates that pass Windows trust and identify exactly SignPath Foundation.
+
+          Privacy policy: https://github.com/getchunes/chunes/blob/main/PRIVACY.md
+          "@
+          gh release create $tag --verify-tag --draft --title "Chunes 1.0.0 - UNSIGNED INTERIM" --notes $notes
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not create the draft v1.0.0 release"
+          }
+          gh release upload $tag $env:UNSIGNED_MSI
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not upload the unsigned MSI without clobbering"
+          }
+
+      - name: Verify draft asset and GitHub digest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $apiVersion = "2026-03-10"
+          $tag = "v1.0.0"
+          $releaseIds = @(gh api --paginate -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == `"$tag`") | .id")
+          if ($LASTEXITCODE -ne 0 -or $releaseIds.Count -ne 1) {
+            throw "Expected exactly one draft release for $tag"
+          }
+          $release = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/$($releaseIds[0])" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $release.draft -ne $true -or $release.prerelease -ne $false -or $release.tag_name -cne $tag) {
+            throw "Release is not the expected stable draft"
+          }
+          if ($release.assets.Count -ne 1) {
+            throw "Draft release must have exactly one asset"
+          }
+          $asset = $release.assets[0]
+          $expectedDigest = "sha256:$env:UNSIGNED_SHA256"
+          if ($asset.name -cne "Chunes-1.0.0-x64.msi" -or $asset.state -cne "uploaded" -or $asset.digest -cne $expectedDigest) {
+            throw "GitHub's uploaded asset digest or identity does not match the local MSI"
+          }
+          "RELEASE_ID=$($release.id)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Reverify tag immediately before publishing latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $apiVersion = "2026-03-10"
+          $tag = "v1.0.0"
+          $ref = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $ref.ref -cne "refs/tags/$tag" -or $ref.object.type -cne "commit" -or $ref.object.sha -cne $env:GITHUB_SHA) {
+            throw "Release tag changed before publication"
+          }
+          gh release edit $tag --verify-tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not publish v1.0.0 as latest"
+          }
+
+      - name: Require immutable published release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $apiVersion = "2026-03-10"
+          $tag = "v1.0.0"
+          $release = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $release.id -ne [long]$env:RELEASE_ID -or $release.draft -ne $false -or $release.prerelease -ne $false -or $release.immutable -ne $true) {
+            throw "Published v1.0.0 did not become immutable"
+          }
+          if ($release.assets.Count -ne 1 -or $release.assets[0].name -cne "Chunes-1.0.0-x64.msi" -or $release.assets[0].digest -cne "sha256:$env:UNSIGNED_SHA256") {
+            throw "Immutable release asset changed"
+          }
+          $latest = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/latest" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $latest.id -ne $release.id) {
+            throw "v1.0.0 was not published as the latest release"
+          }

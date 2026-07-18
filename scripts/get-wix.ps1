@@ -27,7 +27,7 @@ try {
     Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
 }
 
-foreach ($tool in ("candle.exe", "light.exe")) {
+foreach ($tool in ("candle.exe", "dark.exe", "light.exe")) {
     if (-not (Test-Path -LiteralPath (Join-Path $Destination $tool) -PathType Leaf)) {
         throw "Verified WiX archive did not contain $tool"
     }
