@@ -143,7 +143,7 @@ try {
     $verifiedInstaller = $true
 
     $msiexec = Join-Path $env:SystemRoot "System32\msiexec.exe"
-    $arguments = '/i "{0}" /norestart' -f $msi
+    $arguments = '/i "{0}" /quiet /norestart' -f $msi
     $process = Start-Process -FilePath $msiexec -ArgumentList $arguments -Wait -PassThru
     if ($process.ExitCode -notin @(0, 3010)) {
         throw "Windows Installer exited with code $($process.ExitCode)"

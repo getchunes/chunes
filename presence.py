@@ -232,20 +232,19 @@ def fallback_track(report):
         service = protocol.service_for_host(host)
         if service == "soundcloud" and " by " in t:
             title, artist = t.rsplit(" by ", 1)
-            return title.strip(), artist.strip(), host
+            return title.strip(), artist.strip(), host, tab["mediaId"]
         if service == "youtubeMusic":
             t = re.sub(r"\s*-\s*YouTube Music$", "", t)
             if " - " in t:
                 title, artist = t.rsplit(" - ", 1)
-                return title.strip(), artist.strip(), host
+                return title.strip(), artist.strip(), host, tab["mediaId"]
             if t:
-                return t, "", host
+                return t, "", host, tab["mediaId"]
     return None
 
 
-def classify_host(title, report):
-    """Match the playing title against audible browser tabs to find which
-    site it comes from. None if the extension isn't reporting or no match."""
+def classify_tab(title, report):
+    """Match a playing title to its reported audible browser tab."""
     if not report:
         return None
     tl = title.lower().strip()
@@ -253,19 +252,55 @@ def classify_host(title, report):
         return None
     for tab in report["tabs"]:
         if tl in tab["title"].lower():
-            return tab["host"]
+            return tab
     return None
 
 
-_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+def classify_host(title, report):
+    """Return the reported host for a playing title, if one matches."""
+    tab = classify_tab(title, report)
+    return tab["host"] if tab else None
+
+
+_UA = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/138.0.0.0 Safari/537.36"
+    )
+}
+_YOUTUBE_MUSIC_URL = "https://music.youtube.com/"
+_YOUTUBE_MUSIC_ART_HOSTS = {
+    "lh3.googleusercontent.com",
+    "yt3.ggpht.com",
+    "yt3.googleusercontent.com",
+}
 _sc_client_id = None
+_ytm_client = None
 _artwork_cache = {}
 
 
-def _http_get(url):
-    req = urllib.request.Request(url, headers=_UA)
+def _http_get(url, headers=None):
+    request_headers = dict(_UA)
+    if headers:
+        request_headers.update(headers)
+    req = urllib.request.Request(url, headers=request_headers)
     with urllib.request.urlopen(req, timeout=10) as resp:
         return resp.read().decode("utf-8", errors="replace")
+
+
+def _http_post_json(url, value, headers=None):
+    request_headers = {**_UA, "Content-Type": "application/json"}
+    if headers:
+        request_headers.update(headers)
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(value, separators=(",", ":")).encode("utf-8"),
+        headers=request_headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 
 def _soundcloud_client_id():
@@ -283,12 +318,8 @@ def _soundcloud_client_id():
     return None
 
 
-def find_artwork(title, artist):
-    """Best-effort album art URL by searching SoundCloud. Returns None if the
-    track can't be found (e.g. it's actually a YouTube video)."""
-    key = (title, artist)
-    if key in _artwork_cache:
-        return _artwork_cache[key]
+def _find_soundcloud_artwork(title, artist):
+    """Best-effort SoundCloud artwork for the current title and artist."""
     art = None
     try:
         cid = _soundcloud_client_id()
@@ -314,7 +345,129 @@ def find_artwork(title, artist):
             if best:
                 art = best.replace("-large.", "-t500x500.")
     except Exception as e:
-        print(f"Artwork lookup failed: {type(e).__name__}: {e}")
+        print(f"SoundCloud artwork lookup failed: {type(e).__name__}: {e}")
+    return art
+
+
+def _youtube_music_client():
+    """Return public YouTube Music web client values from its own page."""
+    global _ytm_client
+    if _ytm_client:
+        return _ytm_client
+    html = _http_get(_YOUTUBE_MUSIC_URL, {"Cookie": "SOCS=CAI"})
+    values = {}
+    for name in ("INNERTUBE_API_KEY", "INNERTUBE_CLIENT_VERSION", "VISITOR_DATA"):
+        found = re.search(rf'"{name}"\s*:\s*"([^"]+)"', html)
+        if found:
+            values[name] = found.group(1)
+    if "INNERTUBE_API_KEY" not in values or "INNERTUBE_CLIENT_VERSION" not in values:
+        return None
+    _ytm_client = values
+    return _ytm_client
+
+
+def _youtube_music_track(response, video_id):
+    try:
+        tabs = response["contents"]["singleColumnMusicWatchNextResultsRenderer"][
+            "tabbedRenderer"
+        ]["watchNextTabbedResultsRenderer"]["tabs"]
+        items = tabs[0]["tabRenderer"]["content"]["musicQueueRenderer"][
+            "content"
+        ]["playlistPanelRenderer"]["contents"]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+    for item in items:
+        renderer = item.get("playlistPanelVideoRenderer")
+        wrapper = item.get("playlistPanelVideoWrapperRenderer")
+        if renderer is None and isinstance(wrapper, dict):
+            primary = wrapper.get("primaryRenderer", {})
+            renderer = primary.get("playlistPanelVideoRenderer")
+        if isinstance(renderer, dict) and renderer.get("videoId") == video_id:
+            return renderer
+    return None
+
+
+def _square_youtube_music_artwork(track):
+    thumbnails = track.get("thumbnail", {}).get("thumbnails", [])
+    candidates = []
+    for thumbnail in thumbnails:
+        url = thumbnail.get("url")
+        width = thumbnail.get("width")
+        height = thumbnail.get("height")
+        if (
+            not isinstance(url, str)
+            or type(width) is not int
+            or type(height) is not int
+            or width <= 0
+            or width != height
+        ):
+            continue
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme == "https" and parsed.hostname in _YOUTUBE_MUSIC_ART_HOSTS:
+            candidates.append((width, url))
+    return max(candidates, default=(0, None))[1]
+
+
+def _find_youtube_music_artwork(video_id):
+    """Return exact square album artwork for a YouTube Music video ID."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id or ""):
+        return None
+    try:
+        client = _youtube_music_client()
+        if not client:
+            return None
+        headers = {"Origin": _YOUTUBE_MUSIC_URL.rstrip("/")}
+        visitor = client.get("VISITOR_DATA")
+        if visitor:
+            headers["X-Goog-Visitor-Id"] = visitor
+        body = {
+            "context": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": client["INNERTUBE_CLIENT_VERSION"],
+                },
+                "user": {},
+            },
+            "enablePersistentPlaylistPanel": True,
+            "isAudioOnly": True,
+            "playlistId": f"RDAMVM{video_id}",
+            "tunerSettingValue": "AUTOMIX_SETTING_NORMAL",
+            "videoId": video_id,
+            "watchEndpointMusicSupportedConfigs": {
+                "watchEndpointMusicConfig": {
+                    "hasPersistentPlaylistPanel": True,
+                    "musicVideoType": "MUSIC_VIDEO_TYPE_ATV",
+                }
+            },
+        }
+        api_key = urllib.parse.quote(client["INNERTUBE_API_KEY"], safe="")
+        response = _http_post_json(
+            f"{_YOUTUBE_MUSIC_URL}youtubei/v1/next?alt=json&key={api_key}",
+            body,
+            headers,
+        )
+        track = _youtube_music_track(response, video_id)
+        return _square_youtube_music_artwork(track) if track else None
+    except Exception as e:
+        print(f"YouTube Music artwork lookup failed: {type(e).__name__}: {e}")
+        return None
+
+
+def find_artwork(title, artist, host=None, media_id=None, source=None):
+    """Return source-specific online album artwork for the current track."""
+    key = (host, media_id, source, title, artist)
+    if key in _artwork_cache:
+        return _artwork_cache[key]
+
+    service = protocol.service_for_host(host)
+    if service == "youtubeMusic":
+        art = _find_youtube_music_artwork(media_id)
+    elif service == "soundcloud" or not protocol.is_browser_source(source):
+        art = _find_soundcloud_artwork(title, artist)
+    else:
+        art = None
+
     _artwork_cache[key] = art
     if len(_artwork_cache) > 500:
         _artwork_cache.pop(next(iter(_artwork_cache)))
@@ -418,9 +571,13 @@ async def main():
             track = None
 
         host = None
+        media_id = None
         if track:
             title, artist, pos, dur, source = track
-            host = classify_host(title, report)
+            tab = classify_tab(title, report)
+            if tab:
+                host = tab["host"]
+                media_id = tab["mediaId"]
             if not protocol.browser_track_is_allowed(source, report, host):
                 if last is not None:
                     print(
@@ -433,7 +590,7 @@ async def main():
             # session; the extension still knows if a music tab is audible.
             fb = fallback_track(report)
             if fb:
-                title, artist, host = fb
+                title, artist, host, media_id = fb
                 pos, dur, source = 0.0, 0.0, f"tab:{host}"
                 # If we saw this track's real position before losing the
                 # media slot, its wall-clock anchor is still valid: playback
@@ -459,7 +616,7 @@ async def main():
             # Re-send only on track change or a seek (start timestamp moved
             # by more than a few seconds); Discord drops clients that spam
             # SET_ACTIVITY every poll.
-            key = (title, artist, host, use_artwork)
+            key = (title, artist, host, media_id, use_artwork)
             # Re-send periodically even if unchanged: Discord forgets the
             # activity if the client reloads, and we only notice the dead
             # pipe when we next write to it.
@@ -477,7 +634,9 @@ async def main():
                     )
                 art = None
                 if use_artwork:
-                    art = await asyncio.to_thread(find_artwork, title, artist)
+                    art = await asyncio.to_thread(
+                        find_artwork, title, artist, host, media_id, source
+                    )
                 kwargs = dict(
                     activity_type=ActivityType.LISTENING,
                     details=title[:128],

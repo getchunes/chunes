@@ -318,6 +318,13 @@ class InstallerVerificationTests(unittest.TestCase):
         self.assertIn("ProductVersion", updater._UPDATE_HELPER_SCRIPT)
         self.assertIn("ExitCode -notin @(0, 3010)", updater._UPDATE_HELPER_SCRIPT)
         self.assertIn("CHUNES_OLD_EXE_SHA256", updater._UPDATE_HELPER_SCRIPT)
+        self.assertIn('/quiet /norestart', updater._UPDATE_HELPER_SCRIPT)
+        self.assertEqual(
+            updater._UPDATE_HELPER_SCRIPT.count(
+                "Start-Process -FilePath $newExecutable"
+            ),
+            1,
+        )
 
     @unittest.skipUnless(os.name == "nt", "Authenticode is Windows-only")
     def test_unsigned_file_is_rejected_by_windows_trust(self):

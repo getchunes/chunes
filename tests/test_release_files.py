@@ -121,7 +121,80 @@ class PackagingTests(unittest.TestCase):
                 )
                 self.assertEqual(custom.attrib["Value"], "0")
 
-    def test_v1_unsigned_warning_is_visible_only_on_first_install(self):
+    def test_album_art_installer_wording_is_service_neutral(self):
+        checkbox = self.product.find(".//w:Control[@Id='Artwork']", WIX_NS)
+        explanation = self.product.find(
+            ".//w:Control[@Id='ArtworkPrivacyText']", WIX_NS
+        )
+        self.assertEqual(checkbox.attrib["Text"], "Look up online album art")
+        self.assertEqual(
+            explanation.attrib["Text"],
+            "When enabled, Chunes may use the current track title and artist "
+            "to find online album art. You can change this later from the tray menu.",
+        )
+        self.assertNotIn("SoundCloud", checkbox.attrib["Text"])
+        self.assertNotIn("SoundCloud", explanation.attrib["Text"])
+
+        tray_source = (ROOT / "chunes.py").read_text(encoding="utf-8")
+        self.assertIn('"Look up online album art"', tray_source)
+        privacy = (ROOT / "PRIVACY.md").read_text(encoding="utf-8")
+        self.assertIn("## Online album artwork", privacy)
+        self.assertIn("SoundCloud's public website", privacy)
+        self.assertIn("YouTube Music's public", privacy)
+        self.assertIn("https://soundcloud.com/pages/privacy", privacy)
+        self.assertIn("https://policies.google.com/privacy", privacy)
+
+    def test_success_exit_launch_is_default_checked_and_install_only(self):
+        label = self.product.find(
+            "w:Property[@Id='WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT']", WIX_NS
+        )
+        checked = self.product.find(
+            "w:Property[@Id='WIXUI_EXITDIALOGOPTIONALCHECKBOX']", WIX_NS
+        )
+        target = self.product.find(
+            "w:Property[@Id='WixShellExecTarget']", WIX_NS
+        )
+        action = self.product.find("w:CustomAction[@Id='LaunchChunes']", WIX_NS)
+
+        self.assertEqual(label.attrib["Value"], "Launch Chunes when setup finishes")
+        self.assertEqual(checked.attrib["Value"], "1")
+        self.assertEqual(target.attrib["Value"], "[#ChunesExe]")
+        self.assertEqual(action.attrib["BinaryKey"], "WixCA")
+        self.assertEqual(action.attrib["DllEntry"], "WixShellExec")
+        self.assertEqual(action.attrib["Impersonate"], "yes")
+        self.assertEqual(self.product.attrib["Id"], "*")
+        self.assertIsNotNone(self.product.find("w:MajorUpgrade", WIX_NS))
+
+        finish_events = [
+            item
+            for item in self.product.findall(".//w:Publish", WIX_NS)
+            if item.attrib.get("Dialog") == "ExitDialog"
+            and item.attrib.get("Control") == "Finish"
+        ]
+        launch = next(
+            item
+            for item in finish_events
+            if item.attrib.get("Event") == "DoAction"
+            and item.attrib.get("Value") == "LaunchChunes"
+        )
+        end = next(
+            item
+            for item in finish_events
+            if item.attrib.get("Event") == "EndDialog"
+        )
+        self.assertEqual(
+            " ".join((launch.text or "").split()),
+            "WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed",
+        )
+        self.assertLess(int(launch.attrib["Order"]), int(end.attrib["Order"]))
+        self.assertFalse(
+            any(
+                item.attrib.get("Action") == "LaunchChunes"
+                for item in self.product.findall(".//w:Custom", WIX_NS)
+            )
+        )
+
+    def test_unsigned_manual_warning_is_versioned_and_covers_upgrades(self):
         warning = self.product.find(
             ".//w:Dialog[@Id='UnsignedWarningDlg']", WIX_NS
         )
@@ -131,10 +204,10 @@ class PackagingTests(unittest.TestCase):
             for control in warning.findall("w:Control", WIX_NS)
         )
         for required in (
-            "UNSIGNED INTERIM v1.0.0",
+            "UNSIGNED MANUAL v$(var.ProductVersion)",
             "intentionally unsigned",
             "Unknown publisher",
-            "immutable v1.0.0 GitHub release",
+            "immutable GitHub release for this version",
             "SignPath Foundation",
         ):
             with self.subTest(required=required):
@@ -157,14 +230,21 @@ class PackagingTests(unittest.TestCase):
 
         routes = self.product.findall(".//w:Publish[@Dialog='WelcomeDlg']", WIX_NS)
         warning_route = next(
-            route for route in routes if route.attrib.get("Value") == "UnsignedWarningDlg"
+            route
+            for route in routes
+            if route.attrib.get("Value") == "UnsignedWarningDlg"
         )
-        upgrade_route = next(
+        direct_route = next(
             route for route in routes if route.attrib.get("Value") == "InstallDirDlg"
         )
-        self.assertIn("NOT Installed", warning_route.text)
-        self.assertIn("NOT WIX_UPGRADE_DETECTED", warning_route.text)
-        self.assertIn("WIX_UPGRADE_DETECTED", upgrade_route.text)
+        self.assertEqual((warning_route.text or "").strip(), "NOT Installed")
+        self.assertEqual((direct_route.text or "").strip(), "NOT Installed")
+
+        source = (ROOT / "installer" / "Chunes.wxs").read_text(encoding="utf-8")
+        self.assertIn("<?ifdef UnsignedManualRelease ?>", source)
+        build = (ROOT / "scripts" / "build.ps1").read_text(encoding="utf-8")
+        self.assertIn("[switch]$UnsignedManualRelease", build)
+        self.assertIn('"-dUnsignedManualRelease=1"', build)
 
     def test_maintenance_restores_install_path_and_autostart_helpers_are_safe(self):
         search = self.product.find(
@@ -263,6 +343,10 @@ class PackagingTests(unittest.TestCase):
             ),
         )
 
+    def test_installer_finish_launch_links_wix_util_extension(self):
+        script = (ROOT / "scripts" / "build.ps1").read_text(encoding="utf-8")
+        self.assertIn("-ext WixUtilExtension", script)
+
     def test_signed_release_workflow_is_fail_closed_and_immutable(self):
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
             encoding="utf-8"
@@ -270,7 +354,7 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertNotRegex(workflow, re.compile(r"^\s+push:\s*$", re.MULTILINE))
         self.assertRegex(workflow, r"default:\s+1\.0\.1")
-        self.assertIn('Signed stable releases begin at v1.0.1', workflow)
+        self.assertIn('Release version must be newer than immutable v1.0.0', workflow)
         self.assertNotIn("confirm_v1_recreation", workflow)
         self.assertNotIn("NotSigned", workflow)
         signing = workflow.index(
@@ -313,6 +397,7 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("releases?per_page=100", workflow)
         self.assertIn("--paginate --slurp", workflow)
         self.assertIn("Where-Object { $_.tag_name -ceq $tag }", workflow)
+        self.assertIn("Release version must be newer than existing", workflow)
         self.assertNotIn("--jq", workflow)
         self.assertIn('$tagRefs = @(git ls-remote --tags origin', workflow)
         self.assertNotIn("ls-remote --exit-code", workflow)
@@ -330,14 +415,15 @@ class PackagingTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, workflow)
 
-    def test_one_time_unsigned_workflow_has_all_guards(self):
-        workflow = (
-            ROOT / ".github" / "workflows" / "unsigned-v1.0.0.yml"
-        ).read_text(encoding="utf-8")
+    def test_unsigned_manual_workflow_has_all_guards(self):
+        workflow = (ROOT / ".github" / "workflows" / "release-unsigned.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertNotIn("inputs:", workflow)
+        self.assertIn("confirm_unsigned:", workflow)
         self.assertNotRegex(workflow, re.compile(r"^\s+push:\s*$", re.MULTILINE))
-        self.assertIn("RELEASE_VERSION: 1.0.0", workflow)
+        self.assertIn("RELEASE_VERSION: ${{ inputs.version }}", workflow)
+        self.assertIn('CONFIRM_UNSIGNED -cne "true"', workflow)
         self.assertIn('refs/heads/main', workflow)
         self.assertIn("group: stable-release", workflow)
         self.assertIn("permissions: {}", workflow)
@@ -347,11 +433,11 @@ class PackagingTests(unittest.TestCase):
                 r"build:\s+name:.*?permissions:\s+contents: read", re.DOTALL
             ),
         )
-        self.assertIn("environment: unsigned-v1-interim", workflow)
+        self.assertIn("environment: unsigned-manual-release", workflow)
         self.assertRegex(
             workflow,
             re.compile(
-                r"environment: unsigned-v1-interim.*?permissions:\s+"
+                r"environment: unsigned-manual-release.*?permissions:\s+"
                 r"actions: read\s+contents: write",
                 re.DOTALL,
             ),
@@ -360,6 +446,7 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("python -m unittest discover -s tests -v", workflow)
         self.assertIn("get-wix.ps1", workflow)
         self.assertIn('Remove-Item -LiteralPath "build", "dist"', workflow)
+        self.assertIn("-UnsignedManualRelease", workflow)
         self.assertIn("ProductVersion = $expectedFileVersion", workflow)
         self.assertIn("verify_msi_identity", workflow)
         self.assertIn("@($exe.FullName, $embeddedExe.FullName, $msi)", workflow)
@@ -370,30 +457,31 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('(Join-Path $env:WIX_BIN "dark.exe")', workflow)
         self.assertIn("//w:File[@Name='Chunes.exe']", workflow)
         self.assertGreaterEqual(workflow.count("SignatureStatus]::NotSigned"), 2)
-        self.assertIn("path: dist/Chunes-1.0.0-x64.msi", workflow)
+        self.assertIn('"Chunes-$env:RELEASE_VERSION-x64.msi"', workflow)
         self.assertIn("compression-level: 0", workflow)
         self.assertIn("retention-days: 1", workflow)
         self.assertIn("unsigned_sha256:", workflow)
         self.assertIn("releases?per_page=100", workflow)
         self.assertIn("--paginate --slurp", workflow)
         self.assertIn("Where-Object { $_.tag_name -ceq $tag }", workflow)
+        self.assertIn("Release version must be newer than existing", workflow)
         self.assertNotIn("--jq", workflow)
         self.assertIn('$tagRefs = @(git ls-remote --tags origin', workflow)
         self.assertNotIn("ls-remote --exit-code", workflow)
         self.assertIn("git/refs", workflow)
         self.assertIn('sha=$env:GITHUB_SHA', workflow)
-        self.assertIn("--verify-tag --draft", workflow)
-        self.assertIn("$asset.digest -cne $expectedDigest", workflow)
-        self.assertIn("--draft=false --latest", workflow)
+        self.assertIn("prerelease=true", workflow)
+        self.assertGreaterEqual(workflow.count("make_latest=false"), 2)
+        self.assertIn("PREVIOUS_LATEST_ID", workflow)
+        self.assertNotIn("--latest", workflow)
         self.assertIn("$release.immutable -ne $true", workflow)
         for notice in (
-            "UNSIGNED INTERIM",
+            "UNSIGNED MANUAL RELEASE",
             "UNKNOWN PUBLISHER",
             "immutable",
             "SHA-256",
-            "checksum is not Authenticode identity",
-            "v1.0.1",
-            "SignPath Foundation",
+            "checksum verifies byte equality",
+            "manual download",
         ):
             with self.subTest(notice=notice):
                 self.assertIn(notice, workflow)
@@ -417,22 +505,23 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("verify_msi_identity", workflow)
         self.assertIn("SignatureStatus]::NotSigned", workflow)
 
-    def test_unsigned_transition_documentation_has_no_recreation_path(self):
+    def test_release_policy_documents_signed_and_unsigned_paths(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
         signpath = (ROOT / ".signpath" / "README.md").read_text(encoding="utf-8")
         combined = "\n".join((readme, security, signpath))
+        normalized = " ".join(combined.split())
         for required in (
-            "sole intentionally unsigned",
             "Unknown publisher",
             "immutable",
             "SignPath Foundation",
-            "v1.0.1",
             "does not accept unsigned updates",
-            "unsigned-v1-interim",
+            "unsigned-manual-release",
+            "No future version is reserved for signing",
+            "make_latest=false",
         ):
             with self.subTest(required=required):
-                self.assertIn(required, combined)
+                self.assertIn(required, normalized)
         for obsolete in (
             "confirm_v1_recreation",
             "zero-download",
@@ -443,7 +532,7 @@ class PackagingTests(unittest.TestCase):
             "version.py",
             "installer/Chunes.wxs",
             "installer/version_info.txt",
-            ".github/workflows/unsigned-v1.0.0.yml",
+            "Publish unsigned manual release",
             "CodeQL",
             "UpgradeCode",
             "clean per-user installation",

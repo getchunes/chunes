@@ -11,8 +11,9 @@ MAX_BODY_BYTES = 32768
 MAX_TABS = 64
 MAX_HOST_CHARS = 253
 MAX_TITLE_CHARS = 512
+MAX_MEDIA_ID_CHARS = 11
 REPORT_TTL_SECONDS = 90
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 REPORT_KEYS = {"enabled", "services", "tabs"}
 SERVICE_KEYS = {"soundcloud", "youtubeMusic"}
@@ -29,6 +30,7 @@ BROWSER_SOURCE_MARKERS = (
     "vivaldi",
 )
 _HEADER_NAME_RE = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+_YOUTUBE_VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
 _HOST_RE = re.compile(
     r"(?=.{1,253}\Z)"
     r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*"
@@ -63,7 +65,7 @@ def _reject_json_constant(value):
 
 
 def validate_report(value):
-    """Return a detached report after validating the exact v1 schema."""
+    """Return a detached report after validating the exact v2 schema."""
     if not isinstance(value, dict) or set(value) != REPORT_KEYS:
         raise ProtocolError(400, "Invalid report object")
     if type(value["enabled"]) is not bool:
@@ -81,9 +83,10 @@ def validate_report(value):
 
     clean_tabs = []
     for tab in tabs:
-        if not isinstance(tab, dict) or set(tab) != {"host", "title"}:
+        if not isinstance(tab, dict) or set(tab) != {"host", "mediaId", "title"}:
             raise ProtocolError(400, "Invalid tab object")
         host = tab["host"]
+        media_id = tab["mediaId"]
         title = tab["title"]
         if not isinstance(host, str) or not 0 < len(host) <= MAX_HOST_CHARS:
             raise ProtocolError(400, "Invalid tab host")
@@ -91,7 +94,17 @@ def validate_report(value):
             raise ProtocolError(400, "Invalid tab title")
         if host != host.lower() or not _HOST_RE.fullmatch(host):
             raise ProtocolError(400, "Invalid tab host")
-        clean_tabs.append({"host": host, "title": title})
+        if media_id is not None and (
+            not isinstance(media_id, str)
+            or not 0 < len(media_id) <= MAX_MEDIA_ID_CHARS
+        ):
+            raise ProtocolError(400, "Invalid tab media ID")
+        if host == "music.youtube.com":
+            if media_id is not None and not _YOUTUBE_VIDEO_ID_RE.fullmatch(media_id):
+                raise ProtocolError(400, "Invalid YouTube Music video ID")
+        elif media_id is not None:
+            raise ProtocolError(400, "Unexpected tab media ID")
+        clean_tabs.append({"host": host, "mediaId": media_id, "title": title})
 
     return {
         "enabled": value["enabled"],

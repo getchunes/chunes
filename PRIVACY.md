@@ -19,9 +19,11 @@ Controls:
 The Chune ID browser extension sends Chunes an `application/json` report over
 the loopback interface at `127.0.0.1:52846`. That report contains the
 extension's master enabled state, the SoundCloud and YouTube Music enabled
-states, and the host and title of reported audible tabs. It does not contain
-browsing history, page contents, cookies, account credentials, or full URLs.
-Loopback reports are held in memory and expire after 90 seconds.
+states, and the host and title of reported audible tabs. A YouTube Music report
+can also contain the watch page's 11-character public video ID for exact album
+art lookup. It does not contain general browsing history, page body contents,
+cookies, account credentials, or full URLs. Loopback reports are held in memory
+and expire after 90 seconds.
 
 Chunes stores these items on the PC:
 
@@ -53,21 +55,36 @@ To stop this transfer for supported browser services, turn off the Chune ID
 master switch or the relevant service switch. To stop all Discord presence,
 quit Chunes from its tray menu and turn off **Start with Windows** if enabled.
 
-## SoundCloud artwork
+## Online album artwork
 
-When **Look up online cover art** is checked, Chunes contacts SoundCloud's
-public website, its public web application scripts, and its public track search
-API. The search includes the current track title and artist. These requests
-also necessarily expose the user's IP address and a generic desktop browser
-user-agent to SoundCloud and its infrastructure. When a result is found,
-Chunes gives Discord the resulting SoundCloud-hosted artwork URL; Discord may
-then retrieve that image.
+When **Look up online album art** is checked, Chunes uses the identified service
+to find artwork:
+
+- For SoundCloud, or when a non-browser track has no identified service, Chunes
+  contacts SoundCloud's public website, public web application scripts, and
+  public track search API. The search includes the current track title and
+  artist.
+- For YouTube Music, Chunes sends the public video ID to YouTube Music's public
+  web metadata endpoint. It accepts only an exact matching track and square
+  Google-hosted music artwork; it does not use a generic YouTube video
+  thumbnail or fall back to SoundCloud.
+
+These requests necessarily expose the user's IP address and a generic desktop
+browser user-agent to the selected service and its infrastructure. YouTube
+Music may also issue a transient visitor value used for its public web request;
+Chunes does not send account cookies or credentials. When a result is found,
+Chunes gives Discord the resulting provider-hosted artwork URL; Discord may then
+retrieve that image.
 
 SoundCloud's privacy policy applies:
 
 https://soundcloud.com/pages/privacy
 
-Clear **Look up online cover art** in the tray menu to stop all artwork lookup
+Google's privacy policy applies to YouTube Music:
+
+https://policies.google.com/privacy
+
+Clear **Look up online album art** in the tray menu to stop all artwork lookup
 requests. The choice is stored locally and takes effect for the current track
 on the next polling cycle. The installer shows a separate artwork checkbox that
 defaults to on, and preserves an existing opt-out during upgrades.
@@ -95,7 +112,8 @@ again and cancels the pending request before contacting GitHub.
 ## No Chunes service
 
 The Chunes project does not receive the media metadata, extension reports,
-settings, logs, SoundCloud searches, or Discord presence described above.
+settings, logs, SoundCloud searches, YouTube Music artwork requests, or Discord
+presence described above.
 Chunes does not sell or share personal data with a Chunes-operated service
 because no such service is used by the application.
 

@@ -37,7 +37,7 @@ jobs:
             throw "Release version must be a stable semantic version"
           }
           if ([version]$env:RELEASE_VERSION -lt [version]"1.0.1") {
-            throw "Signed stable releases begin at v1.0.1"
+            throw "Release version must be newer than immutable v1.0.0"
           }
 
       - name: Check out source
@@ -195,6 +195,9 @@ jobs:
           if ($payloads.Count -ne 1 -or $payloads[0].Id -cne "ChunesExe") {
             throw "Signed MSI must map exactly one ChunesExe payload to Chunes.exe"
           }
+          if (@($decompiled.SelectNodes("//w:Dialog[@Id='UnsignedWarningDlg']", $namespace)).Count -ne 0) {
+            throw "Signed MSI must not contain the unsigned manual-release warning"
+          }
           $embeddedExe = Get-Item -LiteralPath (Join-Path $extract "File\ChunesExe")
           Assert-SignPathSignature $embeddedExe.FullName
 
@@ -316,6 +319,9 @@ jobs:
           if ($payloads.Count -ne 1 -or $payloads[0].Id -cne "ChunesExe") {
             throw "Publication MSI must map exactly one ChunesExe payload to Chunes.exe"
           }
+          if (@($decompiled.SelectNodes("//w:Dialog[@Id='UnsignedWarningDlg']", $namespace)).Count -ne 0) {
+            throw "Signed publication MSI must not contain the unsigned warning"
+          }
           $embeddedExe = Get-Item -LiteralPath (Join-Path $extract "File\ChunesExe")
           Assert-SignPathSignature $embeddedExe.FullName
 
@@ -349,6 +355,11 @@ jobs:
           $releaseMatches = @($releasePages | ForEach-Object { $_ } | Where-Object { $_.tag_name -ceq $tag })
           if ($releaseMatches.Count -ne 0) {
             throw "A release for $tag already exists"
+          }
+          foreach ($existing in @($releasePages | ForEach-Object { $_ })) {
+            if ($existing.tag_name -match '^v(\d+\.\d+\.\d+)$' -and [version]$Matches[1] -ge [version]$env:RELEASE_VERSION) {
+              throw "Release version must be newer than existing $($existing.tag_name)"
+            }
           }
 
           $tagRefs = @(git ls-remote --tags origin "refs/tags/$tag")
