@@ -342,11 +342,12 @@ jobs:
         run: |
           $apiVersion = "2026-03-10"
           $tag = "v$env:RELEASE_VERSION"
-          $releaseIds = @(gh api --paginate -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == `"$tag`") | .id")
+          $releasePages = gh api --paginate --slurp -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) {
             throw "Could not check existing releases"
           }
-          if ($releaseIds.Count -ne 0) {
+          $releaseMatches = @($releasePages | ForEach-Object { $_ } | Where-Object { $_.tag_name -ceq $tag })
+          if ($releaseMatches.Count -ne 0) {
             throw "A release for $tag already exists"
           }
 
@@ -408,12 +409,16 @@ jobs:
         run: |
           $apiVersion = "2026-03-10"
           $tag = "v$env:RELEASE_VERSION"
-          $releaseIds = @(gh api --paginate -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == `"$tag`") | .id")
-          if ($LASTEXITCODE -ne 0 -or $releaseIds.Count -ne 1) {
+          $releasePages = gh api --paginate --slurp -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not inspect draft releases"
+          }
+          $releaseMatches = @($releasePages | ForEach-Object { $_ } | Where-Object { $_.tag_name -ceq $tag })
+          if ($releaseMatches.Count -ne 1) {
             throw "Expected exactly one draft release for $tag"
           }
-          $release = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/$($releaseIds[0])" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or $release.draft -ne $true -or $release.prerelease -ne $false -or $release.tag_name -cne $tag) {
+          $release = $releaseMatches[0]
+          if ($release.draft -ne $true -or $release.prerelease -ne $false -or $release.tag_name -cne $tag) {
             throw "Release is not the expected stable draft"
           }
           if ($release.assets.Count -ne 1) {
