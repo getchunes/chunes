@@ -1,3 +1,3 @@
 """Application version shared by the tray app and updater."""
 
-__version__ = "1.0.4"
+__version__ = "1.0.5"
