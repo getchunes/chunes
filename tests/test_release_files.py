@@ -143,6 +143,8 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("YouTube Music's public", privacy)
         self.assertIn("https://soundcloud.com/pages/privacy", privacy)
         self.assertIn("https://policies.google.com/privacy", privacy)
+        self.assertIn("itunes.apple.com/search", privacy)
+        self.assertIn("https://www.apple.com/legal/privacy/", privacy)
 
     def test_success_exit_launch_is_default_checked_and_install_only(self):
         label = self.product.find(
