@@ -250,8 +250,32 @@ def refresh_dynamic_menu(icon, stop_event, interval=0.5):
                 return
 
 
+def _register_close_messages(icon):
+    if not hasattr(icon, "_message_handlers"):
+        return
+    
+    def on_close(hwnd, msg, wparam, lparam):
+        _tray_stop.set()
+        icon.stop()
+        return 0
+
+    def on_queryendsession(hwnd, msg, wparam, lparam):
+        return 1
+
+    def on_endsession(hwnd, msg, wparam, lparam):
+        if wparam:
+            _tray_stop.set()
+            icon.stop()
+        return 0
+
+    icon._message_handlers[0x0010] = on_close
+    icon._message_handlers[0x0011] = on_queryendsession
+    icon._message_handlers[0x0016] = on_endsession
+
+
 def setup_tray(icon):
     icon.visible = True
+    _register_close_messages(icon)
     threading.Thread(
         target=refresh_dynamic_menu,
         args=(icon, _tray_stop),

@@ -137,5 +137,43 @@ class SingleInstanceTests(unittest.TestCase):
         kernel32.CloseHandle.assert_not_called()
 
 
+class GracefulCloseTests(unittest.TestCase):
+    def tearDown(self):
+        chunes._tray_stop.clear()
+
+    def test_registration_requires_message_handlers_dict(self):
+        icon = mock.Mock(spec=[])
+        chunes._register_close_messages(icon)
+        self.assertFalse(hasattr(icon, "_message_handlers"))
+
+    def test_registered_handlers_satisfy_pystray_contract(self):
+        icon = mock.Mock()
+        icon._message_handlers = {}
+        chunes._register_close_messages(icon)
+
+        # WM_CLOSE
+        self.assertEqual(icon._message_handlers[0x0010](None, None, None, None), 0)
+        self.assertTrue(chunes._tray_stop.is_set())
+        icon.stop.assert_called_once_with()
+
+        chunes._tray_stop.clear()
+        icon.stop.reset_mock()
+
+        # WM_QUERYENDSESSION
+        self.assertEqual(icon._message_handlers[0x0011](None, None, None, None), 1)
+        self.assertFalse(chunes._tray_stop.is_set())
+        icon.stop.assert_not_called()
+
+        # WM_ENDSESSION (wparam=False)
+        self.assertEqual(icon._message_handlers[0x0016](None, None, 0, None), 0)
+        self.assertFalse(chunes._tray_stop.is_set())
+        icon.stop.assert_not_called()
+
+        # WM_ENDSESSION (wparam=True)
+        self.assertEqual(icon._message_handlers[0x0016](None, None, 1, None), 0)
+        self.assertTrue(chunes._tray_stop.is_set())
+        icon.stop.assert_called_once_with()
+
+
 if __name__ == "__main__":
     unittest.main()
