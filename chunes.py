@@ -42,6 +42,29 @@ def _open_log():
 
 _updater = None
 _tray_stop = threading.Event()
+_instance_mutex = None
+
+
+def acquire_single_instance():
+    global _instance_mutex
+    if os.name != "nt":
+        return True
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_mutex = kernel32.CreateMutexW
+    create_mutex.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+    create_mutex.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+    ctypes.set_last_error(0)
+    handle = create_mutex(None, False, r"Local\Chunes.SingleInstance")
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    if ctypes.get_last_error() == 183:
+        close_handle(handle)
+        return False
+    _instance_mutex = handle
+    return True
 
 
 def resource_path(*parts):
@@ -262,6 +285,9 @@ def main():
     global _updater
     _open_log()
     if _handle_installer_command():
+        return
+    if not acquire_single_instance():
+        print("Chunes is already running; the second instance is exiting.")
         return
     migrate_legacy_autostart()
     _tray_stop.clear()

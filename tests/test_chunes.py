@@ -109,5 +109,33 @@ class TrayStatusTests(unittest.TestCase):
         icon.update_menu.assert_called_once_with()
 
 
+class SingleInstanceTests(unittest.TestCase):
+    def tearDown(self):
+        chunes._instance_mutex = None
+
+    def test_existing_mutex_rejects_a_second_instance(self):
+        kernel32 = mock.Mock()
+        kernel32.CreateMutexW.return_value = 123
+        with (
+            mock.patch.object(chunes.ctypes, "WinDLL", return_value=kernel32),
+            mock.patch.object(chunes.ctypes, "set_last_error"),
+            mock.patch.object(chunes.ctypes, "get_last_error", return_value=183),
+        ):
+            self.assertFalse(chunes.acquire_single_instance())
+        kernel32.CloseHandle.assert_called_once_with(123)
+
+    def test_new_mutex_is_kept_for_the_process_lifetime(self):
+        kernel32 = mock.Mock()
+        kernel32.CreateMutexW.return_value = 456
+        with (
+            mock.patch.object(chunes.ctypes, "WinDLL", return_value=kernel32),
+            mock.patch.object(chunes.ctypes, "set_last_error"),
+            mock.patch.object(chunes.ctypes, "get_last_error", return_value=0),
+        ):
+            self.assertTrue(chunes.acquire_single_instance())
+        self.assertEqual(chunes._instance_mutex, 456)
+        kernel32.CloseHandle.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

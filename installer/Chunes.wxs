@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+<Wix
+  xmlns="http://schemas.microsoft.com/wix/2006/wi"
+  xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <?ifndef ProductVersion ?>
     <?define ProductVersion="1.0.1" ?>
   <?endif ?>
@@ -28,6 +30,14 @@
     <MajorUpgrade
       Schedule="afterInstallInitialize"
       DowngradeErrorMessage="A newer version of Chunes is already installed." />
+    <util:CloseApplication
+      Id="CloseRunningChunes"
+      Target="Chunes.exe"
+      CloseMessage="yes"
+      ElevatedCloseMessage="yes"
+      Timeout="5"
+      TerminateProcess="0"
+      RebootPrompt="no" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Property Id="ARPPRODUCTICON" Value="ChunesIcon" />
@@ -323,7 +333,7 @@
           Width="330"
           Height="45"
           NoPrefix="yes"
-          Text="This manual release does not weaken update verification. Chunes automatically installs only Windows-trusted updates signed by SignPath Foundation." />
+          Text="This manual release does not weaken update verification. Chunes currently opens newer release pages for manual installation; its retained automatic installer accepts only Windows-trusted SignPath Foundation updates." />
       </Dialog>
       <?endif ?>
 
@@ -409,7 +419,7 @@
           Width="305"
           Height="38"
           NoPrefix="yes"
-          Text="When enabled, Chunes contacts the GitHub Releases API shortly after startup. It asks before downloading or installing anything. You can change this later from the tray menu." />
+          Text="When enabled, Chunes contacts the GitHub Releases API shortly after startup and opens a newer release's page in your default browser. It does not download or install updates. You can change this later from the tray menu." />
         <Control
           Id="Artwork"
           Type="CheckBox"

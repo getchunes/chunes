@@ -61,6 +61,7 @@ if ($UnsignedManualRelease) {
 & $candle `
     -nologo `
     -arch x64 `
+    -ext WixUtilExtension `
     "-dProductVersion=$version" `
     "-dSourceDir=$(Join-Path $root 'dist')" `
     "-dProjectDir=$root" `

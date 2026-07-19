@@ -48,8 +48,13 @@ unless the release reports immutable. Published asset bytes and tags are never
 replaced or reused; fixes always receive a new version. SHA-256 verifies byte
 equality with the GitHub asset but is not Authenticode publisher identity.
 
-The in-app updater independently requires all of the following before it starts
-Windows Installer:
+The active in-app check includes published stable and manual-prerelease numeric
+versions. It opens a newer version's exact GitHub release page in the default
+browser and does not download or run the MSI.
+
+The signed automatic-install implementation is retained but currently inactive.
+Before it can start Windows Installer, it independently requires all of the
+following:
 
 - a newer stable GitHub release, not a draft or prerelease
 - a release that reports `immutable: true`
@@ -60,11 +65,12 @@ Windows Installer:
   manufacturer `Chunes`, and UpgradeCode
   `{2DDF67BD-FBDE-4BDF-A090-F1552C2C1330}`
 
-An absent, invalid, untrusted, or differently published signature is a hard
-automatic-update failure. An unsigned application does not accept unsigned
-updates and has no bypass for its own unsigned origin. Unsigned releases require
-manual installation. See the [Code signing policy](README.md#code-signing-policy)
-for release roles and controls.
+When that path is re-enabled, an absent, invalid, untrusted, or differently
+published signature is a hard automatic-update failure. An unsigned application
+does not accept unsigned updates and has no bypass for its own unsigned origin.
+Unsigned releases require manual installation. See the
+[Code signing policy](README.md#code-signing-policy) for release roles and
+controls.
 
 The update helper runs from an encoded command through the Windows PowerShell
 system binary rather than downloaded code. After Chunes exits, it repeats the
