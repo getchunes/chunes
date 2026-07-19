@@ -364,7 +364,7 @@ class PackagingTests(unittest.TestCase):
         )
         self.assertIn("workflow_dispatch:", workflow)
         self.assertNotRegex(workflow, re.compile(r"^\s+push:\s*$", re.MULTILINE))
-        self.assertRegex(workflow, r"default:\s+1\.0\.1")
+        self.assertRegex(workflow, r"default:\s+1\.0\.2")
         self.assertIn('Release version must be newer than immutable v1.0.0', workflow)
         self.assertNotIn("confirm_v1_recreation", workflow)
         self.assertNotIn("NotSigned", workflow)
