@@ -7,7 +7,7 @@ import protocol
 
 VALID_REPORT = {
     "enabled": True,
-    "services": {"soundcloud": True, "youtubeMusic": True},
+    "services": {"appleMusic": True, "soundcloud": True, "youtubeMusic": True},
     "tabs": [
         {"host": "soundcloud.com", "mediaId": None, "title": "Song by Artist"},
         {
@@ -90,11 +90,11 @@ class ReportValidationTests(unittest.TestCase):
         bodies = [
             b'{"enabled":true,"enabled":false,"services":{},"tabs":[]}',
             (
-                b'{"enabled":true,"services":{"soundcloud":true,'
+                b'{"enabled":true,"services":{"appleMusic":true,"soundcloud":true,'
                 b'"soundcloud":false,"youtubeMusic":true},"tabs":[]}'
             ),
             (
-                b'{"enabled":true,"services":{"soundcloud":true,'
+                b'{"enabled":true,"services":{"appleMusic":true,"soundcloud":true,'
                 b'"youtubeMusic":true},"tabs":[{"host":"soundcloud.com",'
                 b'"title":NaN}]}'
             ),

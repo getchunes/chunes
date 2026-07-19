@@ -3,7 +3,7 @@
   xmlns="http://schemas.microsoft.com/wix/2006/wi"
   xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <?ifndef ProductVersion ?>
-    <?define ProductVersion="1.0.2" ?>
+    <?define ProductVersion="1.0.3" ?>
   <?endif ?>
   <?ifndef SourceDir ?>
     <?define SourceDir="..\dist" ?>
@@ -152,7 +152,7 @@
                   Id="StartMenuShortcut"
                   Directory="ProgramMenuFolder"
                   Name="Chunes"
-                  Description="Show SoundCloud and YouTube Music in Discord"
+                  Description="Show SoundCloud, YouTube Music, and Apple Music in Discord"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="ChunesIcon"
                   Advertise="no" />

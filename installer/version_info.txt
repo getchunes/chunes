@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 2, 0),
-    prodvers=(1, 0, 2, 0),
+    filevers=(1, 0, 3, 0),
+    prodvers=(1, 0, 3, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,12 +16,12 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'Chunes'),
           StringStruct('FileDescription', 'Chunes Discord music presence'),
-          StringStruct('FileVersion', '1.0.2.0'),
+          StringStruct('FileVersion', '1.0.3.0'),
           StringStruct('InternalName', 'Chunes'),
           StringStruct('LegalCopyright', 'Copyright 2026 Chunes contributors'),
           StringStruct('OriginalFilename', 'Chunes.exe'),
           StringStruct('ProductName', 'Chunes'),
-          StringStruct('ProductVersion', '1.0.2.0')
+          StringStruct('ProductVersion', '1.0.3.0')
         ]
       )
     ]),

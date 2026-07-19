@@ -240,6 +240,13 @@ def fallback_track(report):
                 return title.strip(), artist.strip(), host, tab["mediaId"]
             if t:
                 return t, "", host, tab["mediaId"]
+        if service == "appleMusic":
+            t = re.sub(r"\s*on Apple Music$", "", t).strip()
+            if " by " in t:
+                title, artist = t.rsplit(" by ", 1)
+                return title.strip(), artist.strip(), host, tab["mediaId"]
+            if t:
+                return t, "", host, tab["mediaId"]
     return None
 
 
@@ -454,6 +461,22 @@ def _find_youtube_music_artwork(video_id):
         return None
 
 
+def _find_apple_music_artwork(title, artist):
+    """Return square album artwork for an Apple Music track via iTunes API."""
+    try:
+        q = urllib.parse.quote(f"{title} {artist}".strip())
+        url = f"https://itunes.apple.com/search?term={q}&entity=song&limit=1"
+        data = json.loads(_http_get(url))
+        results = data.get("results", [])
+        if results:
+            art = results[0].get("artworkUrl100", "")
+            if art:
+                return art.replace("100x100bb", "500x500bb")
+    except Exception as e:
+        print(f"Apple Music artwork lookup failed: {type(e).__name__}: {e}")
+    return None
+
+
 def find_artwork(title, artist, host=None, media_id=None, source=None):
     """Return source-specific online album artwork for the current track."""
     key = (host, media_id, source, title, artist)
@@ -463,6 +486,8 @@ def find_artwork(title, artist, host=None, media_id=None, source=None):
     service = protocol.service_for_host(host)
     if service == "youtubeMusic":
         art = _find_youtube_music_artwork(media_id)
+    elif service == "appleMusic":
+        art = _find_apple_music_artwork(title, artist)
     elif service == "soundcloud" or not protocol.is_browser_source(source):
         art = _find_soundcloud_artwork(title, artist)
     else:
