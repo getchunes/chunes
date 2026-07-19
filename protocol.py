@@ -16,8 +16,9 @@ REPORT_TTL_SECONDS = 90
 PROTOCOL_VERSION = 2
 
 REPORT_KEYS = {"enabled", "services", "tabs"}
-SERVICE_KEYS = {"soundcloud", "youtubeMusic"}
+SERVICE_KEYS = {"appleMusic", "soundcloud", "youtubeMusic"}
 SERVICE_LABELS = {
+    "appleMusic": "Apple Music",
     "soundcloud": "SoundCloud",
     "youtubeMusic": "YouTube Music",
 }
@@ -109,6 +110,7 @@ def validate_report(value):
     return {
         "enabled": value["enabled"],
         "services": {
+            "appleMusic": services["appleMusic"],
             "soundcloud": services["soundcloud"],
             "youtubeMusic": services["youtubeMusic"],
         },
@@ -206,6 +208,8 @@ def report_is_fresh(reported_at, now=None):
 
 def service_for_host(host):
     normalized = (host or "").strip().lower().rstrip(".")
+    if normalized == "music.apple.com":
+        return "appleMusic"
     if normalized == "soundcloud.com" or normalized.endswith(".soundcloud.com"):
         return "soundcloud"
     if normalized == "music.youtube.com":
@@ -255,7 +259,7 @@ def safe_public_state(report, fresh):
         return {
             "fresh": False,
             "enabled": False,
-            "services": {"soundcloud": False, "youtubeMusic": False},
+            "services": {"appleMusic": False, "soundcloud": False, "youtubeMusic": False},
         }
     return {
         "fresh": True,
