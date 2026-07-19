@@ -274,6 +274,7 @@ _YOUTUBE_MUSIC_ART_HOSTS = {
     "lh3.googleusercontent.com",
     "yt3.ggpht.com",
     "yt3.googleusercontent.com",
+    "i.ytimg.com",
 }
 _sc_client_id = None
 _ytm_client = None
@@ -390,7 +391,8 @@ def _youtube_music_track(response, video_id):
 
 def _square_youtube_music_artwork(track):
     thumbnails = track.get("thumbnail", {}).get("thumbnails", [])
-    candidates = []
+    square_candidates = []
+    any_candidates = []
     for thumbnail in thumbnails:
         url = thumbnail.get("url")
         width = thumbnail.get("width")
@@ -400,13 +402,18 @@ def _square_youtube_music_artwork(track):
             or type(width) is not int
             or type(height) is not int
             or width <= 0
-            or width != height
         ):
             continue
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme == "https" and parsed.hostname in _YOUTUBE_MUSIC_ART_HOSTS:
-            candidates.append((width, url))
-    return max(candidates, default=(0, None))[1]
+            if width == height:
+                square_candidates.append((width, url))
+            else:
+                any_candidates.append((width, url))
+                
+    if square_candidates:
+        return max(square_candidates)[1]
+    return max(any_candidates, default=(0, None))[1]
 
 
 def _find_youtube_music_artwork(video_id):

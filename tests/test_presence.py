@@ -296,7 +296,7 @@ class ArtworkTests(unittest.TestCase):
         self.assertEqual(body["playlistId"], f"RDAMVM{self.VIDEO_ID}")
         self.assertEqual(headers["X-Goog-Visitor-Id"], "visitor")
 
-    def test_youtube_music_never_falls_back_to_video_or_soundcloud_art(self):
+    def test_youtube_music_falls_back_to_video_thumbnail_without_soundcloud(self):
         response = self.youtube_music_response(
             self.VIDEO_ID,
             [
@@ -316,10 +316,11 @@ class ArtworkTests(unittest.TestCase):
             mock.patch.object(presence, "_http_post_json", return_value=response),
             mock.patch.object(presence, "_find_soundcloud_artwork") as soundcloud,
         ):
-            self.assertIsNone(
+            self.assertEqual(
                 presence.find_artwork(
                     "Track", "Artist", "music.youtube.com", self.VIDEO_ID
-                )
+                ),
+                "https://i.ytimg.com/vi/a1B2c3D4e5F/hqdefault.jpg"
             )
         soundcloud.assert_not_called()
 
