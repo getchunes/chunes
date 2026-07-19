@@ -3,7 +3,7 @@
   xmlns="http://schemas.microsoft.com/wix/2006/wi"
   xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <?ifndef ProductVersion ?>
-    <?define ProductVersion="1.0.5" ?>
+    <?define ProductVersion="1.0.6" ?>
   <?endif ?>
   <?ifndef SourceDir ?>
     <?define SourceDir="..\dist" ?>
@@ -104,7 +104,7 @@
     <CustomAction
       Id="SetCloseChunesCmd"
       Property="WixQuietExecCmdLine"
-      Value="&quot;[SystemFolder]taskkill.exe&quot; /F /IM Chunes.exe" />
+      Value="&quot;[SystemFolder]cmd.exe&quot; /c &quot;taskkill /F /IM Chunes.exe &amp; ping 127.0.0.1 -n 3 &gt; nul&quot;" />
     <CustomAction
       Id="CloseChunesEarly"
       BinaryKey="WixCA"

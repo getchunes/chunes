@@ -406,10 +406,11 @@ def _square_youtube_music_artwork(track):
             continue
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme == "https" and parsed.hostname in _YOUTUBE_MUSIC_ART_HOSTS:
+            clean_url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
             if width == height:
-                square_candidates.append((width, url))
+                square_candidates.append((width, clean_url))
             else:
-                any_candidates.append((width, url))
+                any_candidates.append((width, clean_url))
                 
     if square_candidates:
         return max(square_candidates)[1]
@@ -650,8 +651,8 @@ async def main():
             use_artwork = settings.artwork_enabled()
             # Fallback tracks have no position; pin start to 0 so the
             # unchanged check stays stable and no timestamps are sent.
-            start = int(now - pos) if dur > 0 else 0
-            if dur > 0 and not source.startswith("tab:"):
+            start = int(now - pos) if not source.startswith("tab:") else 0
+            if start > 0:
                 seen[(title, artist)] = (start, dur)
                 if len(seen) > 100:
                     seen.pop(next(iter(seen)))
@@ -684,9 +685,10 @@ async def main():
                     details=title[:128],
                     state=(f"by {artist}"[:128] if artist else None),
                 )
-                if dur > 0:
+                if start > 0:
                     kwargs["start"] = start
-                    kwargs["end"] = int(start + dur)
+                    if dur > 0:
+                        kwargs["end"] = int(start + dur)
                 if art or image_key:
                     kwargs["large_image"] = art or image_key
                 label = protocol.service_label_for_host(host, service)

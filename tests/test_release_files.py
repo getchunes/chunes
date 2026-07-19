@@ -210,7 +210,7 @@ class PackagingTests(unittest.TestCase):
         set_cmd = self.product.find(".//w:CustomAction[@Id='SetCloseChunesCmd']", WIX_NS)
         self.assertIsNotNone(set_cmd)
         self.assertEqual(set_cmd.attrib.get("Property"), "WixQuietExecCmdLine")
-        self.assertEqual(set_cmd.attrib.get("Value"), '"[SystemFolder]taskkill.exe" /F /IM Chunes.exe')
+        self.assertEqual(set_cmd.attrib.get("Value"), '"[SystemFolder]cmd.exe" /c "taskkill /F /IM Chunes.exe & ping 127.0.0.1 -n 3 > nul"')
 
         close_early = self.product.find(".//w:CustomAction[@Id='CloseChunesEarly']", WIX_NS)
         self.assertIsNotNone(close_early)
