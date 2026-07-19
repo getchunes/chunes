@@ -257,6 +257,7 @@ def _register_close_messages(icon):
     def on_close(hwnd, msg, wparam, lparam):
         _tray_stop.set()
         icon.stop()
+        ctypes.windll.user32.DestroyWindow(hwnd)
         return 0
 
     def on_queryendsession(hwnd, msg, wparam, lparam):
@@ -266,6 +267,7 @@ def _register_close_messages(icon):
         if wparam:
             _tray_stop.set()
             icon.stop()
+            ctypes.windll.user32.DestroyWindow(hwnd)
         return 0
 
     icon._message_handlers[0x0010] = on_close
