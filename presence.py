@@ -666,10 +666,11 @@ async def main():
             else:
                 tab = classify_tab(title, report)
             if tab is None and protocol.is_browser_source(source):
-                # Apple Music's web player keeps the page name in the tab
-                # title, so its playing track never matches; an audible
-                # Apple Music tab claims the unmatched session instead.
-                tab = protocol.untitled_service_tab(report)
+                enabled = protocol.enabled_tabs(report)
+                if len(enabled) == 1:
+                    tab = enabled[0]
+                else:
+                    tab = protocol.untitled_service_tab(report)
             if tab:
                 host = tab["host"]
                 media_id = tab["mediaId"]
