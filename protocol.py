@@ -22,6 +22,10 @@ SERVICE_LABELS = {
     "soundcloud": "SoundCloud",
     "youtubeMusic": "YouTube Music",
 }
+# Services whose page titles never contain the playing track (Apple Music's
+# web player keeps the page name while playing), so a playing title can only
+# be attributed to them by audible-tab presence.
+UNTITLED_TRACK_SERVICES = {"appleMusic"}
 BROWSER_SOURCE_MARKERS = (
     "brave",
     "chrome",
@@ -236,6 +240,19 @@ def enabled_tabs(report):
         for tab in report["tabs"]
         if service_is_enabled(report, tab["host"])
     ]
+
+
+def untitled_service_tab(report):
+    """Tab to attribute a playing title that matches no reported tab title.
+
+    Only tabs of UNTITLED_TRACK_SERVICES qualify: their audible presence is
+    the strongest available signal that the unmatched browser session is
+    theirs.
+    """
+    for tab in enabled_tabs(report):
+        if service_for_host(tab["host"]) in UNTITLED_TRACK_SERVICES:
+            return tab
+    return None
 
 
 def is_browser_source(source):

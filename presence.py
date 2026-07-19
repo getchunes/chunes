@@ -240,13 +240,6 @@ def fallback_track(report):
                 return title.strip(), artist.strip(), host, tab["mediaId"]
             if t:
                 return t, "", host, tab["mediaId"]
-        if service == "appleMusic":
-            t = re.sub(r"\s*on Apple Music$", "", t).strip()
-            if " by " in t:
-                title, artist = t.rsplit(" by ", 1)
-                return title.strip(), artist.strip(), host, tab["mediaId"]
-            if t:
-                return t, "", host, tab["mediaId"]
     return None
 
 
@@ -462,19 +455,31 @@ def _find_youtube_music_artwork(video_id):
 
 
 def _find_apple_music_artwork(title, artist):
-    """Return square album artwork for an Apple Music track via iTunes API."""
+    """Best-effort Apple Music artwork from the public iTunes Search API."""
+    art = None
     try:
         q = urllib.parse.quote(f"{title} {artist}".strip())
-        url = f"https://itunes.apple.com/search?term={q}&entity=song&limit=1"
-        data = json.loads(_http_get(url))
-        results = data.get("results", [])
-        if results:
-            art = results[0].get("artworkUrl100", "")
-            if art:
-                return art.replace("100x100bb", "500x500bb")
+        data = json.loads(_http_get(
+            "https://itunes.apple.com/search"
+            f"?term={q}&media=music&entity=song&limit=5"
+        ))
+        tl = title.lower()
+        best = None
+        for t in data.get("results", []):
+            cand = t.get("artworkUrl100")
+            if not isinstance(cand, str) or not cand:
+                continue
+            ct = (t.get("trackName") or "").lower()
+            if ct and (ct in tl or tl in ct):
+                best = cand
+                break
+            if best is None:
+                best = cand
+        if best:
+            art = best.replace("100x100", "500x500")
     except Exception as e:
         print(f"Apple Music artwork lookup failed: {type(e).__name__}: {e}")
-    return None
+    return art
 
 
 def find_artwork(title, artist, host=None, media_id=None, source=None):
@@ -600,6 +605,11 @@ async def main():
         if track:
             title, artist, pos, dur, source = track
             tab = classify_tab(title, report)
+            if tab is None and protocol.is_browser_source(source):
+                # Apple Music's web player keeps the page name in the tab
+                # title, so its playing track never matches; an audible
+                # Apple Music tab claims the unmatched session instead.
+                tab = protocol.untitled_service_tab(report)
             if tab:
                 host = tab["host"]
                 media_id = tab["mediaId"]
