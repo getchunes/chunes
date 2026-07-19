@@ -201,8 +201,10 @@ async def _handle_tab_report(reader, writer):
             _tab_state.clear()
             _tab_state.update(report)
             _tab_reported_at = time.time()
-            set_status(extension_enabled=report["enabled"])
-            reply = _http_reply(204)
+            with _status_lock:
+                current_track = status.get("track")
+            res_body = json.dumps({"status": "ok", "track": current_track}, separators=(",", ":")).encode()
+            reply = _http_reply(200, res_body)
     except protocol.ProtocolError as exc:
         reply = _http_reply(exc.status)
     except (
