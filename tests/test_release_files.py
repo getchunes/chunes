@@ -143,6 +143,8 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("YouTube Music's public", privacy)
         self.assertIn("https://soundcloud.com/pages/privacy", privacy)
         self.assertIn("https://policies.google.com/privacy", privacy)
+        self.assertIn("itunes.apple.com/search", privacy)
+        self.assertIn("https://www.apple.com/legal/privacy/", privacy)
 
     def test_success_exit_launch_is_default_checked_and_install_only(self):
         label = self.product.find(
@@ -204,6 +206,27 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(close.attrib["Timeout"], "5")
         self.assertEqual(close.attrib["TerminateProcess"], "0")
         self.assertEqual(close.attrib["RebootPrompt"], "no")
+
+        set_cmd = self.product.find(".//w:CustomAction[@Id='SetCloseChunesCmd']", WIX_NS)
+        self.assertIsNotNone(set_cmd)
+        self.assertEqual(set_cmd.attrib.get("Property"), "WixQuietExecCmdLine")
+        self.assertEqual(set_cmd.attrib.get("Value"), '"[SystemFolder]taskkill.exe" /F /IM Chunes.exe')
+
+        close_early = self.product.find(".//w:CustomAction[@Id='CloseChunesEarly']", WIX_NS)
+        self.assertIsNotNone(close_early)
+        self.assertEqual(close_early.attrib.get("BinaryKey"), "WixCA")
+        self.assertEqual(close_early.attrib.get("DllEntry"), "WixQuietExec")
+        self.assertEqual(close_early.attrib.get("Execute"), "immediate")
+        self.assertEqual(close_early.attrib.get("Return"), "ignore")
+
+        exec_seq = self.product.find(".//w:InstallExecuteSequence", WIX_NS)
+        set_custom = exec_seq.find("w:Custom[@Action='SetCloseChunesCmd']", WIX_NS)
+        self.assertIsNotNone(set_custom)
+        self.assertEqual(set_custom.attrib.get("Before"), "CloseChunesEarly")
+
+        close_custom = exec_seq.find("w:Custom[@Action='CloseChunesEarly']", WIX_NS)
+        self.assertIsNotNone(close_custom)
+        self.assertEqual(close_custom.attrib.get("Before"), "InstallValidate")
 
     def test_unsigned_manual_warning_is_versioned_and_covers_upgrades(self):
         warning = self.product.find(

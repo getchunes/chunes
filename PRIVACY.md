@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Effective: July 18, 2026
+Effective: July 19, 2026
 
 Chunes is a local Windows application. It has no Chunes account, advertising,
 analytics, crash-reporting service, or telemetry endpoint. Chunes does process
@@ -18,12 +18,13 @@ Controls:
 
 The Chune ID browser extension sends Chunes an `application/json` report over
 the loopback interface at `127.0.0.1:52846`. That report contains the
-extension's master enabled state, the SoundCloud and YouTube Music enabled
-states, and the host and title of reported audible tabs. A YouTube Music report
-can also contain the watch page's 11-character public video ID for exact album
-art lookup. It does not contain general browsing history, page body contents,
-cookies, account credentials, or full URLs. Loopback reports are held in memory
-and expire after 90 seconds.
+extension's master enabled state, the SoundCloud, YouTube Music, and Apple Music
+enabled states, and the host and title of reported audible tabs. A YouTube Music
+report can also contain the watch page's 11-character public video ID for exact
+album art lookup. An Apple Music report carries host and title only; the media
+ID is always null for Apple Music. It does not contain general browsing history,
+page body contents, cookies, account credentials, or full URLs. Loopback reports
+are held in memory and expire after 90 seconds.
 
 Chunes stores these items on the PC:
 
@@ -68,6 +69,9 @@ to find artwork:
   web metadata endpoint. It accepts only an exact matching track and square
   Google-hosted music artwork; it does not use a generic YouTube video
   thumbnail or fall back to SoundCloud.
+- For Apple Music, Chunes sends the current track title and artist to Apple's
+  public iTunes Search API (itunes.apple.com/search, keyless). It uses the
+  returned Apple-hosted artwork URL for matching results.
 
 These requests necessarily expose the user's IP address and a generic desktop
 browser user-agent to the selected service and its infrastructure. YouTube
@@ -83,6 +87,10 @@ https://soundcloud.com/pages/privacy
 Google's privacy policy applies to YouTube Music:
 
 https://policies.google.com/privacy
+
+Apple's privacy policy applies to Apple Music artwork lookups:
+
+https://www.apple.com/legal/privacy/
 
 Clear **Look up online album art** in the tray menu to stop all artwork lookup
 requests. The choice is stored locally and takes effect for the current track
