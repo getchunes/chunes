@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Effective: July 19, 2026
+Effective: July 18, 2026
 
 Chunes is a local Windows application. It has no Chunes account, advertising,
 analytics, crash-reporting service, or telemetry endpoint. Chunes does process
@@ -19,10 +19,9 @@ Controls:
 The Chune ID browser extension sends Chunes an `application/json` report over
 the loopback interface at `127.0.0.1:52846`. That report contains the
 extension's master enabled state, the SoundCloud and YouTube Music enabled
-states, and the host and title of reported audible tabs. Audible Apple Music
-tabs are included only while the extension's Apple Music switch is on. A
-YouTube Music report can also contain the watch page's 11-character public
-video ID for exact album art lookup. It does not contain general browsing history, page body contents,
+states, and the host and title of reported audible tabs. A YouTube Music report
+can also contain the watch page's 11-character public video ID for exact album
+art lookup. It does not contain general browsing history, page body contents,
 cookies, account credentials, or full URLs. Loopback reports are held in memory
 and expire after 90 seconds.
 
@@ -69,9 +68,6 @@ to find artwork:
   web metadata endpoint. It accepts only an exact matching track and square
   Google-hosted music artwork; it does not use a generic YouTube video
   thumbnail or fall back to SoundCloud.
-- For Apple Music, Chunes searches the public iTunes Search API. The search
-  includes the current track title and artist and does not fall back to
-  SoundCloud.
 
 These requests necessarily expose the user's IP address and a generic desktop
 browser user-agent to the selected service and its infrastructure. YouTube
@@ -87,10 +83,6 @@ https://soundcloud.com/pages/privacy
 Google's privacy policy applies to YouTube Music:
 
 https://policies.google.com/privacy
-
-Apple's privacy policy applies to the iTunes Search API:
-
-https://www.apple.com/legal/privacy/
 
 Clear **Look up online album art** in the tray menu to stop all artwork lookup
 requests. The choice is stored locally and takes effect for the current track
@@ -122,8 +114,8 @@ again and cancels the pending request before contacting GitHub.
 ## No Chunes service
 
 The Chunes project does not receive the media metadata, extension reports,
-settings, logs, SoundCloud searches, YouTube Music or Apple Music artwork
-requests, or Discord presence described above.
+settings, logs, SoundCloud searches, YouTube Music artwork requests, or Discord
+presence described above.
 Chunes does not sell or share personal data with a Chunes-operated service
 because no such service is used by the application.
 

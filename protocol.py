@@ -18,19 +18,9 @@ PROTOCOL_VERSION = 2
 REPORT_KEYS = {"enabled", "services", "tabs"}
 SERVICE_KEYS = {"soundcloud", "youtubeMusic"}
 SERVICE_LABELS = {
-    "appleMusic": "Apple Music",
     "soundcloud": "SoundCloud",
     "youtubeMusic": "YouTube Music",
 }
-# Services with no flag in the report's services object: the extension only
-# reports their tabs while their toggle is on, so a reported tab already
-# implies consent. Keeping them out of SERVICE_KEYS keeps the v2 wire schema
-# valid for older apps and extensions.
-EXTENSION_FILTERED_SERVICES = {"appleMusic"}
-# Services whose page titles never contain the playing track (Apple Music's
-# web player keeps the page name while playing), so a playing title can only
-# be attributed to them by audible-tab presence.
-UNTITLED_TRACK_SERVICES = {"appleMusic"}
 BROWSER_SOURCE_MARKERS = (
     "brave",
     "chrome",
@@ -220,8 +210,6 @@ def service_for_host(host):
         return "soundcloud"
     if normalized == "music.youtube.com":
         return "youtubeMusic"
-    if normalized == "music.apple.com":
-        return "appleMusic"
     return None
 
 
@@ -233,11 +221,7 @@ def service_is_enabled(report, host):
     if not report or not report["enabled"]:
         return False
     service = service_for_host(host)
-    if service is None:
-        return False
-    # Extension-filtered services have no flag to check; their tabs are only
-    # reported while their toggle is on.
-    return report["services"].get(service, service in EXTENSION_FILTERED_SERVICES)
+    return service is not None and report["services"][service]
 
 
 def enabled_tabs(report):
@@ -248,19 +232,6 @@ def enabled_tabs(report):
         for tab in report["tabs"]
         if service_is_enabled(report, tab["host"])
     ]
-
-
-def untitled_service_tab(report):
-    """Tab to attribute a playing title that matches no reported tab title.
-
-    Only tabs of UNTITLED_TRACK_SERVICES qualify: their audible presence is
-    the strongest available signal that the unmatched browser session is
-    theirs.
-    """
-    for tab in enabled_tabs(report):
-        if service_for_host(tab["host"]) in UNTITLED_TRACK_SERVICES:
-            return tab
-    return None
 
 
 def is_browser_source(source):

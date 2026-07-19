@@ -18,14 +18,6 @@ VALID_REPORT = {
     ],
 }
 
-# Apple Music's web player keeps the page name while playing, so its tab
-# titles never contain the playing track.
-APPLE_TAB = {
-    "host": "music.apple.com",
-    "mediaId": None,
-    "title": "Daughter from Hell - Album by Gracie Abrams - Apple Music",
-}
-
 
 class ReportValidationTests(unittest.TestCase):
     def test_accepts_and_detaches_exact_payload(self):
@@ -63,16 +55,6 @@ class ReportValidationTests(unittest.TestCase):
         numeric_service = copy.deepcopy(VALID_REPORT)
         numeric_service["services"]["soundcloud"] = 1
         invalid.append(numeric_service)
-
-        # Apple Music has no services flag on the wire; the v2 schema stays
-        # exactly two service keys so older apps keep accepting reports.
-        apple_service = copy.deepcopy(VALID_REPORT)
-        apple_service["services"]["appleMusic"] = True
-        invalid.append(apple_service)
-
-        apple_media_id = copy.deepcopy(VALID_REPORT)
-        apple_media_id["tabs"].append({**APPLE_TAB, "mediaId": "a1B2c3D4e5F"})
-        invalid.append(apple_media_id)
 
         tabs_object = copy.deepcopy(VALID_REPORT)
         tabs_object["tabs"] = {}
@@ -141,14 +123,6 @@ class ReportValidationTests(unittest.TestCase):
     def test_parses_valid_utf8_json(self):
         body = json.dumps(VALID_REPORT, ensure_ascii=False).encode("utf-8")
         self.assertEqual(protocol.parse_report_body(body), VALID_REPORT)
-
-    def test_accepts_apple_music_tabs_in_v2_reports(self):
-        value = copy.deepcopy(VALID_REPORT)
-        value["tabs"].append(copy.deepcopy(APPLE_TAB))
-
-        report = protocol.validate_report(value)
-
-        self.assertIn(APPLE_TAB, report["tabs"])
 
 
 class RequestValidationTests(unittest.TestCase):
@@ -276,42 +250,6 @@ class ServicePolicyTests(unittest.TestCase):
         )
         report["enabled"] = False
         self.assertEqual(protocol.enabled_tabs(report), [])
-
-    def test_apple_music_identity_label_and_default_enablement(self):
-        self.assertEqual(
-            protocol.service_for_host("music.apple.com"), "appleMusic"
-        )
-        self.assertEqual(
-            protocol.service_label_for_host("music.apple.com"), "Apple Music"
-        )
-        self.assertIsNone(protocol.service_for_host("www.apple.com"))
-
-        report = copy.deepcopy(VALID_REPORT)
-        report["tabs"].append(copy.deepcopy(APPLE_TAB))
-        browser = "Google.Chrome_123"
-
-        # No services flag exists for Apple Music: the extension only reports
-        # its tabs while the toggle is on, so a reported tab means enabled.
-        self.assertTrue(
-            protocol.browser_track_is_allowed(browser, report, "music.apple.com")
-        )
-        self.assertIn(APPLE_TAB, protocol.enabled_tabs(report))
-
-        report["enabled"] = False
-        self.assertFalse(
-            protocol.browser_track_is_allowed(browser, report, "music.apple.com")
-        )
-
-    def test_untitled_service_tab_attributes_only_apple_music(self):
-        report = copy.deepcopy(VALID_REPORT)
-        self.assertIsNone(protocol.untitled_service_tab(report))
-        self.assertIsNone(protocol.untitled_service_tab(None))
-
-        report["tabs"].append(copy.deepcopy(APPLE_TAB))
-        self.assertEqual(protocol.untitled_service_tab(report), APPLE_TAB)
-
-        report["enabled"] = False
-        self.assertIsNone(protocol.untitled_service_tab(report))
 
     def test_report_freshness_is_bounded(self):
         self.assertTrue(protocol.report_is_fresh(100, now=100))
