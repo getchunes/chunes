@@ -661,7 +661,10 @@ async def main():
         media_id = None
         if track:
             title, artist, pos, dur, source = track
-            tab = classify_tab(title, report)
+            if normalize_title(title) in ("youtube music", "soundcloud", "apple music", "youtube"):
+                track = None
+            else:
+                tab = classify_tab(title, report)
             if tab is None and protocol.is_browser_source(source):
                 # Apple Music's web player keeps the page name in the tab
                 # title, so its playing track never matches; an audible
