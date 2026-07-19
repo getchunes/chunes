@@ -236,12 +236,13 @@ def fallback_track(report):
             title, artist = t.rsplit(" by ", 1)
             return title.strip(), artist.strip(), host, tab["mediaId"]
         if service == "youtubeMusic":
-            t = re.sub(r"\s*-\s*YouTube Music$", "", t)
+            t = re.sub(r"\s*\|\s*YouTube Music$", "", t).strip()
+            if normalize_title(t) in ("", "youtube music", "youtube"):
+                continue
             if " - " in t:
                 title, artist = t.rsplit(" - ", 1)
                 return title.strip(), artist.strip(), host, tab["mediaId"]
-            if t:
-                return t, "", host, tab["mediaId"]
+            return t, "", host, tab["mediaId"]
     return None
 
 
