@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -109,7 +110,43 @@ class ReleaseSelectionTests(unittest.TestCase):
                     updater.parse_version(value)
 
 
+class ReleaseNoticeSelectionTests(unittest.TestCase):
+    def test_selects_newest_published_release_including_prereleases(self):
+        releases = [
+            release("1.0.1", prerelease=True),
+            release("1.2.0"),
+            release("1.1.0", prerelease=True),
+        ]
+        notice = updater.select_release_notice(releases, current="1.0.0")
+        self.assertEqual(notice.version, "1.2.0")
+        self.assertEqual(
+            notice.page_url,
+            "https://github.com/getchunes/chunes/releases/tag/v1.2.0",
+        )
+
+    def test_ignores_drafts_malformed_tags_and_current_versions(self):
+        releases = [
+            release("2.0.0", draft=True),
+            release("1.0.0"),
+            release("1.1.0-beta"),
+        ]
+        self.assertIsNone(
+            updater.select_release_notice(releases, current="1.0.0")
+        )
+
+    def test_release_notice_does_not_require_an_installer_asset(self):
+        notice = updater.select_release_notice(
+            [release("1.0.1", prerelease=True, assets=[])],
+            current="1.0.0",
+        )
+        self.assertEqual(notice.version, "1.0.1")
+
+
 class ReleaseFetchTests(unittest.TestCase):
+    @staticmethod
+    def page_url(page=1):
+        return f"{updater.RELEASES_URL}?per_page=100&page={page}"
+
     def test_release_check_uses_api_version_with_immutable_field(self):
         response = mock.MagicMock()
         response.__enter__.return_value = response
@@ -135,6 +172,51 @@ class ReleaseFetchTests(unittest.TestCase):
         ):
             with self.assertRaises(updater.UpdateError):
                 updater.fetch_latest_release()
+
+    def test_release_catalog_includes_prereleases(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.geturl.return_value = self.page_url()
+        response.read.return_value = b"[]"
+
+        with mock.patch.object(
+            updater.urllib.request, "urlopen", return_value=response
+        ) as urlopen:
+            self.assertEqual(updater.fetch_releases(), [])
+
+        self.assertEqual(urlopen.call_args.args[0].full_url, self.page_url())
+
+    def test_release_catalog_follows_full_pages(self):
+        first = mock.MagicMock()
+        first.__enter__.return_value = first
+        first.geturl.return_value = self.page_url(1)
+        first.read.return_value = json.dumps([release()] * 100).encode("utf-8")
+        second = mock.MagicMock()
+        second.__enter__.return_value = second
+        second.geturl.return_value = self.page_url(2)
+        second.read.return_value = json.dumps([release("2.0.0")]).encode("utf-8")
+
+        with mock.patch.object(
+            updater.urllib.request, "urlopen", side_effect=[first, second]
+        ) as urlopen:
+            releases = updater.fetch_releases()
+
+        self.assertEqual(len(releases), 101)
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(
+            urlopen.call_args_list[1].args[0].full_url, self.page_url(2)
+        )
+
+    def test_release_catalog_requires_a_list(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.geturl.return_value = self.page_url()
+        response.read.return_value = b"{}"
+        with mock.patch.object(
+            updater.urllib.request, "urlopen", return_value=response
+        ):
+            with self.assertRaisesRegex(updater.UpdateError, "invalid releases"):
+                updater.fetch_releases()
 
 
 class InstallerVerificationTests(unittest.TestCase):
@@ -316,7 +398,12 @@ class InstallerVerificationTests(unittest.TestCase):
         self.assertIn("Start-PreviousChunes", updater._UPDATE_HELPER_SCRIPT)
         self.assertIn("WaitForExit", updater._UPDATE_HELPER_SCRIPT)
         self.assertIn("ProductVersion", updater._UPDATE_HELPER_SCRIPT)
-        self.assertIn("ExitCode -notin @(0, 3010)", updater._UPDATE_HELPER_SCRIPT)
+        self.assertIn("ExitCode -eq 3010", updater._UPDATE_HELPER_SCRIPT)
+        reboot_check = updater._UPDATE_HELPER_SCRIPT.index("ExitCode -eq 3010")
+        new_launch = updater._UPDATE_HELPER_SCRIPT.index(
+            "Start-Process -FilePath $newExecutable"
+        )
+        self.assertLess(reboot_check, new_launch)
         self.assertIn("CHUNES_OLD_EXE_SHA256", updater._UPDATE_HELPER_SCRIPT)
         self.assertIn('/quiet /norestart', updater._UPDATE_HELPER_SCRIPT)
         self.assertEqual(
@@ -348,22 +435,19 @@ class UpdateControllerTests(unittest.TestCase):
             mock.patch.object(
                 updater.settings, "automatic_updates_enabled", return_value=False
             ),
-            mock.patch.object(updater, "fetch_latest_release") as fetch,
+            mock.patch.object(updater, "fetch_releases") as fetch,
             mock.patch("builtins.print"),
         ):
             controller = updater.UpdateController(mock.Mock(), "1.0.0")
             controller._run(manual=False, delay=8)
         fetch.assert_not_called()
 
-    def test_successful_helper_handoff_stops_the_running_app(self):
+    def test_signed_install_path_is_retained_but_separate(self):
         with tempfile.TemporaryDirectory() as directory:
             installer = Path(directory) / "Chunes-1.1.0-x64.msi"
             installer.write_bytes(b"verified")
             stop = mock.Mock()
             with (
-                mock.patch.object(
-                    updater, "fetch_latest_release", return_value=release()
-                ),
                 mock.patch.object(updater, "_ask_download", return_value=True),
                 mock.patch.object(
                     updater, "download_asset", return_value=installer
@@ -372,44 +456,62 @@ class UpdateControllerTests(unittest.TestCase):
                 mock.patch("builtins.print"),
             ):
                 controller = updater.UpdateController(stop, "1.0.0")
-                controller._run(manual=True, delay=0)
+                self.assertTrue(controller._offer_signed_install(release()))
 
             stop.assert_called_once_with()
             self.assertTrue(installer.exists())
 
-    def test_automatic_failure_is_logged_but_not_shown(self):
-        with tempfile.TemporaryDirectory() as directory:
-            installer = Path(directory) / "Chunes-1.1.0-x64.msi"
-            installer.write_bytes(b"bad")
-            with (
-                mock.patch.object(updater, "fetch_latest_release", return_value=release()),
-                mock.patch.object(updater, "_ask_download", return_value=True),
-                mock.patch.object(updater, "download_asset", return_value=installer),
-                mock.patch.object(
-                    updater.settings, "automatic_updates_enabled", return_value=True
-                ),
-                mock.patch.object(
-                    updater,
-                    "verify_and_launch",
-                    side_effect=updater.UpdateError("unsigned"),
-                ),
-                mock.patch.object(updater, "_message") as message,
-                mock.patch("builtins.print") as output,
-            ):
-                controller = updater.UpdateController(mock.Mock(), "1.0.0")
-                controller._run(manual=False, delay=0)
+    def test_newer_unsigned_prerelease_opens_browser_without_installing(self):
+        on_install = mock.Mock()
+        with (
+            mock.patch.object(
+                updater,
+                "fetch_releases",
+                return_value=[release("1.0.1", prerelease=True, assets=[])],
+            ),
+            mock.patch.object(updater, "open_release_page") as open_page,
+            mock.patch.object(updater, "download_asset") as download,
+            mock.patch("builtins.print"),
+        ):
+            controller = updater.UpdateController(on_install, "1.0.0")
+            controller._run(manual=False, delay=0)
 
-            message.assert_not_called()
-            self.assertFalse(installer.exists())
-            self.assertTrue(
-                any("Update failed" in str(call) for call in output.call_args_list)
-            )
+        notice = open_page.call_args.args[0]
+        self.assertEqual(notice.version, "1.0.1")
+        self.assertEqual(
+            notice.page_url,
+            "https://github.com/getchunes/chunes/releases/tag/v1.0.1",
+        )
+        download.assert_not_called()
+        on_install.assert_not_called()
+
+    def test_automatic_failure_is_logged_but_not_shown(self):
+        with (
+            mock.patch.object(updater, "fetch_releases", return_value=[release()]),
+            mock.patch.object(
+                updater,
+                "open_release_page",
+                side_effect=updater.UpdateError("browser unavailable"),
+            ),
+            mock.patch.object(
+                updater.settings, "automatic_updates_enabled", return_value=True
+            ),
+            mock.patch.object(updater, "_message") as message,
+            mock.patch("builtins.print") as output,
+        ):
+            controller = updater.UpdateController(mock.Mock(), "1.0.0")
+            controller._run(manual=False, delay=0)
+
+        message.assert_not_called()
+        self.assertTrue(
+            any("Update failed" in str(call) for call in output.call_args_list)
+        )
 
     def test_manual_failure_is_shown(self):
         with (
             mock.patch.object(
                 updater,
-                "fetch_latest_release",
+                "fetch_releases",
                 side_effect=updater.UpdateError("offline"),
             ),
             mock.patch.object(updater, "_message") as message,
@@ -424,7 +526,7 @@ class UpdateControllerTests(unittest.TestCase):
     def test_manual_current_version_is_reported(self):
         with (
             mock.patch.object(
-                updater, "fetch_latest_release", return_value=release("1.0.0")
+                updater, "fetch_releases", return_value=[release("1.0.0")]
             ),
             mock.patch.object(updater, "_message") as message,
             mock.patch("builtins.print"),
@@ -434,6 +536,14 @@ class UpdateControllerTests(unittest.TestCase):
 
         message.assert_called_once()
         self.assertIn("up to date", message.call_args.args[0])
+
+    def test_default_browser_failure_is_reported(self):
+        notice = updater.ReleaseNotice(
+            "1.0.1", "https://github.com/getchunes/chunes/releases/tag/v1.0.1"
+        )
+        with mock.patch.object(updater.webbrowser, "open", return_value=False):
+            with self.assertRaises(updater.UpdateError):
+                updater.open_release_page(notice)
 
 
 if __name__ == "__main__":

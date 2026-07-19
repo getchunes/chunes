@@ -194,6 +194,17 @@ class PackagingTests(unittest.TestCase):
             )
         )
 
+    def test_installer_closes_running_chunes_before_replacing_files(self):
+        util_ns = {"util": "http://schemas.microsoft.com/wix/UtilExtension"}
+        close = self.product.find("util:CloseApplication", util_ns)
+        self.assertIsNotNone(close)
+        self.assertEqual(close.attrib["Target"], "Chunes.exe")
+        self.assertEqual(close.attrib["CloseMessage"], "yes")
+        self.assertEqual(close.attrib["ElevatedCloseMessage"], "yes")
+        self.assertEqual(close.attrib["Timeout"], "5")
+        self.assertEqual(close.attrib["TerminateProcess"], "0")
+        self.assertEqual(close.attrib["RebootPrompt"], "no")
+
     def test_unsigned_manual_warning_is_versioned_and_covers_upgrades(self):
         warning = self.product.find(
             ".//w:Dialog[@Id='UnsignedWarningDlg']", WIX_NS
@@ -345,7 +356,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_installer_finish_launch_links_wix_util_extension(self):
         script = (ROOT / "scripts" / "build.ps1").read_text(encoding="utf-8")
-        self.assertIn("-ext WixUtilExtension", script)
+        self.assertGreaterEqual(script.count("-ext WixUtilExtension"), 2)
 
     def test_signed_release_workflow_is_fail_closed_and_immutable(self):
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(

@@ -51,11 +51,13 @@ GitHub release. It does not provide Authenticode publisher identity, prove that
 the code is safe, or turn the unsigned MSI into a signed one.
 
 New releases use one of two channels. A signed stable release is published as
-`latest` and is eligible for the in-app updater. If code signing is unavailable,
+`latest`. If code signing is unavailable,
 an unsigned release may instead be published as an explicitly labeled manual
-prerelease; Windows shows **Unknown publisher**, and the in-app updater does not
-offer it. Every release and tag is immutable. A later signing transition always
-uses a higher version rather than replacing an unsigned release.
+prerelease; Windows shows **Unknown publisher**. Chunes finds either kind of
+newer published release and opens its exact GitHub release page in the default
+browser for a manual update. Every release and tag is immutable. A later signing
+transition always uses a higher version rather than replacing an unsigned
+release.
 
 ## How it works
 
@@ -116,8 +118,15 @@ local and network data flow and the corresponding opt-outs.
 
 ## Update security
 
-Chunes checks only the latest stable release in `getchunes/chunes`. Before
-starting `msiexec`, the updater requires:
+Chunes checks published releases in `getchunes/chunes`, including explicitly
+labeled unsigned manual prereleases. When it finds a newer numeric version, it
+opens that version's exact GitHub release page in the default browser. Chunes
+does not currently download an MSI, start Windows Installer, or exit during an
+update check.
+
+The signed automatic-install path remains in the application but is not wired
+to automatic or manual checks until signed releases are available. Before that
+path can start `msiexec`, it requires:
 
 - a strictly newer stable semantic version
 - an immutable GitHub release
@@ -129,20 +138,15 @@ starting `msiexec`, the updater requires:
   the selected release version, and UpgradeCode
   `{2DDF67BD-FBDE-4BDF-A090-F1552C2C1330}`
 
-The user is prompted before download. An unsigned, altered, untrusted, or
-differently published installer is deleted and never run. Automatic failures
-go to the local log; manual failures are also shown to the user. After initial
-verification, Chunes starts a Windows PowerShell helper and exits so files can
-be replaced. The helper waits for Chunes to stop, repeats the hash, signature,
-publisher, and MSI identity checks, waits for Windows Installer, then relaunches
-the installed app. Cancellation or failure attempts to relaunch the unchanged
-previous executable instead.
+When re-enabled, the user is prompted before download. An unsigned, altered,
+untrusted, or differently published installer is deleted and never run. The
+retained helper waits for Chunes to stop, repeats the hash, signature, publisher,
+and MSI identity checks, waits for Windows Installer, then relaunches the
+installed app. A restart-required result does not launch a potentially
+not-yet-replaced executable.
 
-Running an unsigned Chunes version does not create an updater exception. It
-remains fail-closed and will download or install only a newer
-MSI that passes the immutable-release, digest, exact identity, Windows trust,
-and exact **SignPath Foundation** publisher checks. There is no unsigned update
-bypass.
+Opening an unsigned release page does not weaken the retained automatic-install
+checks. There is no unsigned automatic-update bypass.
 
 ## Configuration
 
@@ -208,8 +212,9 @@ handoff.
 signing is unavailable. It requires explicit confirmation and a separate
 protected environment, proves the raw EXE, embedded EXE, and MSI are unsigned,
 and includes a versioned installer warning. It publishes an immutable GitHub
-prerelease without changing `/releases/latest`, so the in-app updater never
-offers it.
+prerelease without changing `/releases/latest`. The browser-based release check
+still finds it, while the inactive signed installer path remains ineligible to
+install it.
 
 Repository release immutability is enabled and must be independently confirmed
 by a maintainer before either workflow is dispatched; GitHub's scoped workflow

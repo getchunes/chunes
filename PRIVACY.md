@@ -94,9 +94,11 @@ defaults to on, and preserves an existing opt-out during upgrades.
 When **Automatically check for updates** is checked, Chunes contacts the public
 GitHub Releases API shortly after startup. A manual **Check for updates now**
 does the same. The request contains the installed Chunes version in its
-user-agent and necessarily exposes the user's IP address to GitHub. If the user
-accepts an offered update, Chunes downloads the exact MSI release asset from
-GitHub's release infrastructure.
+user-agent and necessarily exposes the user's IP address to GitHub. If a newer
+published version exists, including an explicitly labeled manual prerelease,
+Chunes opens that version's GitHub release page in the default browser. The
+browser then makes its normal requests to GitHub. Chunes does not currently
+download or launch an installer itself.
 
 GitHub's privacy statement applies:
 

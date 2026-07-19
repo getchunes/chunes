@@ -1,4 +1,4 @@
-"""Secure GitHub release updater for Chunes."""
+"""GitHub release notifier and retained signed updater for Chunes."""
 
 import base64
 from dataclasses import dataclass
@@ -16,18 +16,21 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import webbrowser
 
 import settings
 from version import __version__
 
 
 LATEST_RELEASE_URL = "https://api.github.com/repos/getchunes/chunes/releases/latest"
+RELEASES_URL = "https://api.github.com/repos/getchunes/chunes/releases"
 EXPECTED_PUBLISHER = "SignPath Foundation"
 EXPECTED_PRODUCT_NAME = "Chunes"
 EXPECTED_MANUFACTURER = "Chunes"
 EXPECTED_UPGRADE_CODE = "{2DDF67BD-FBDE-4BDF-A090-F1552C2C1330}"
-MAX_API_BYTES = 1_000_000
+MAX_API_BYTES = 5_000_000
 MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024
+MAX_RELEASE_PAGES = 10
 _VERSION_RE = re.compile(
     r"(?:v)?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 )
@@ -148,6 +151,20 @@ try {
     if ($process.ExitCode -notin @(0, 3010)) {
         throw "Windows Installer exited with code $($process.ExitCode)"
     }
+    if ($process.ExitCode -eq 3010) {
+        Write-ChunesUpdateLog "Installation completed; Windows must restart before Chunes can be launched."
+        try {
+            Add-Type -AssemblyName System.Windows.Forms
+            [System.Windows.Forms.MessageBox]::Show(
+                "The Chunes update completed, but Windows must restart before Chunes can be launched.",
+                "Chunes update",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            ) | Out-Null
+        } catch {
+        }
+        exit 0
+    }
 
     $installPath = (Get-ItemProperty -LiteralPath "HKCU:\Software\Chunes" -Name InstallPath).InstallPath
     $newExecutable = Join-Path $installPath "Chunes.exe"
@@ -194,6 +211,12 @@ class ReleaseAsset:
     url: str
     sha256: str
     size: int
+
+
+@dataclass(frozen=True)
+class ReleaseNotice:
+    version: str
+    page_url: str
 
 
 def parse_version(value):
@@ -288,6 +311,43 @@ def select_release_asset(release, current=__version__):
     )
 
 
+def select_release_notice(releases, current=__version__):
+    """Select the newest published numeric release, including prereleases."""
+    if not isinstance(releases, list):
+        raise ValueError("invalid releases response")
+    current_tuple = parse_version(current)
+    selected = None
+    selected_tuple = current_tuple
+    for release in releases:
+        prerelease = (
+            release.get("prerelease") if isinstance(release, dict) else None
+        )
+        if (
+            not isinstance(release, dict)
+            or release.get("draft") is not False
+            or (prerelease is not False and prerelease is not True)
+        ):
+            continue
+        tag = release.get("tag_name")
+        try:
+            version_tuple = parse_version(tag)
+        except ValueError:
+            continue
+        if version_tuple <= selected_tuple:
+            continue
+        version = ".".join(str(part) for part in version_tuple)
+        canonical_tag = f"v{version}" if str(tag).strip().startswith("v") else version
+        selected = ReleaseNotice(
+            version=version,
+            page_url=(
+                "https://github.com/getchunes/chunes/releases/tag/"
+                f"{canonical_tag}"
+            ),
+        )
+        selected_tuple = version_tuple
+    return selected
+
+
 def sha256_file(path):
     digest = hashlib.sha256()
     with open(path, "rb") as stream:
@@ -332,6 +392,41 @@ def fetch_latest_release():
         return json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise UpdateError("GitHub returned an invalid release response") from exc
+
+
+def fetch_releases():
+    releases = []
+    for page in range(1, MAX_RELEASE_PAGES + 1):
+        page_url = f"{RELEASES_URL}?per_page=100&page={page}"
+        request = urllib.request.Request(
+            page_url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2026-03-10",
+                "User-Agent": f"Chunes/{__version__}",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            if response.geturl() != page_url:
+                raise UpdateError("Release check redirected off GitHub")
+            body = response.read(MAX_API_BYTES + 1)
+        if len(body) > MAX_API_BYTES:
+            raise UpdateError("GitHub releases response is too large")
+        try:
+            page_releases = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise UpdateError("GitHub returned an invalid releases response") from exc
+        if not isinstance(page_releases, list):
+            raise UpdateError("GitHub returned an invalid releases response")
+        releases.extend(page_releases)
+        if len(page_releases) < 100:
+            return releases
+    raise UpdateError("GitHub release history exceeds the supported page limit")
+
+
+def open_release_page(notice):
+    if not webbrowser.open(notice.page_url, new=2):
+        raise UpdateError("Windows could not open the Chunes release page")
 
 
 def download_asset(asset):
@@ -687,8 +782,6 @@ class UpdateController:
         return True
 
     def _run(self, manual, delay):
-        installer = None
-        handed_off = False
         try:
             if delay:
                 time.sleep(delay)
@@ -696,10 +789,8 @@ class UpdateController:
                 print("Automatic update check canceled because it was turned off.")
                 return
             print("Checking GitHub for Chunes updates...")
-            asset = select_release_asset(
-                fetch_latest_release(), self.current_version
-            )
-            if asset is None:
+            notice = select_release_notice(fetch_releases(), self.current_version)
+            if notice is None:
                 print("Chunes is up to date.")
                 if manual:
                     _message(
@@ -707,21 +798,12 @@ class UpdateController:
                         0x00000040,
                     )
                 return
-            if not _ask_download(asset):
-                print(f"Update {asset.version} declined.")
-                return
-
-            print(f"Downloading {asset.filename}...")
-            installer = download_asset(asset)
-            verify_and_launch(asset, installer)
-            handed_off = True
-            self.on_install()
+            print(
+                f"Chunes {notice.version} is available; opening "
+                f"{notice.page_url}."
+            )
+            open_release_page(notice)
         except Exception as exc:
-            if installer and not handed_off:
-                try:
-                    Path(installer).unlink(missing_ok=True)
-                except OSError:
-                    pass
             message = f"Update failed: {type(exc).__name__}: {exc}"
             print(message)
             if manual:
@@ -729,3 +811,24 @@ class UpdateController:
         finally:
             with self._lock:
                 self._checking = False
+
+    def _offer_signed_install(self, release):
+        """Retained, inactive signed-update path for a future signed release."""
+        asset = select_release_asset(release, self.current_version)
+        if asset is None or not _ask_download(asset):
+            return False
+        installer = None
+        handed_off = False
+        try:
+            print(f"Downloading {asset.filename}...")
+            installer = download_asset(asset)
+            verify_and_launch(asset, installer)
+            handed_off = True
+            self.on_install()
+            return True
+        finally:
+            if installer and not handed_off:
+                try:
+                    Path(installer).unlink(missing_ok=True)
+                except OSError:
+                    pass
