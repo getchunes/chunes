@@ -162,6 +162,39 @@ class DesktopProtocolTests(unittest.TestCase):
             "YouTube Music",
         )
 
+    def test_apple_music_is_attributed_by_tab_presence_not_title(self):
+        report = {
+            "enabled": True,
+            "services": {
+                "appleMusic": True,
+                "soundcloud": True,
+                "youtubeMusic": True,
+            },
+            "tabs": [
+                {
+                    "host": "music.apple.com",
+                    "mediaId": None,
+                    "title": "Album Name - Album by Some Artist - Apple Music",
+                }
+            ],
+        }
+
+        # The web player keeps the page name while playing, so the playing
+        # title never matches the tab title and no fallback track can be
+        # rebuilt from it; attribution comes from the audible tab instead.
+        self.assertIsNone(presence.classify_host("Real Song", report))
+        self.assertIsNone(presence.fallback_track(report))
+        self.assertEqual(
+            presence.protocol.untitled_service_tab(report), report["tabs"][0]
+        )
+        self.assertEqual(
+            presence.protocol.service_label_for_host("music.apple.com"),
+            "Apple Music",
+        )
+
+        report["services"]["appleMusic"] = False
+        self.assertIsNone(presence.protocol.untitled_service_tab(report))
+
 
 class ArtworkTests(unittest.TestCase):
     VIDEO_ID = "a1B2c3D4e5F"
@@ -286,6 +319,47 @@ class ArtworkTests(unittest.TestCase):
             self.assertIsNone(
                 presence.find_artwork(
                     "Track", "Artist", "music.youtube.com", self.VIDEO_ID
+                )
+            )
+        soundcloud.assert_not_called()
+
+    def test_apple_music_artwork_comes_from_itunes_search_only(self):
+        small = (
+            "https://is1-ssl.mzstatic.com/image/thumb/Music/cover/100x100bb.jpg"
+        )
+        response = json.dumps(
+            {
+                "results": [
+                    {"trackName": "Real Song", "artworkUrl100": small},
+                ]
+            }
+        )
+        with (
+            mock.patch.object(presence, "_http_get", return_value=response) as get,
+            mock.patch.object(presence, "_find_soundcloud_artwork") as soundcloud,
+        ):
+            art = presence.find_artwork(
+                "Real Song", "Some Artist", "music.apple.com", None, "brave"
+            )
+
+        self.assertEqual(
+            art,
+            "https://is1-ssl.mzstatic.com/image/thumb/Music/cover/500x500bb.jpg",
+        )
+        url = get.call_args.args[0]
+        self.assertTrue(url.startswith("https://itunes.apple.com/search?"))
+        self.assertIn("media=music", url)
+        self.assertIn("Real%20Song%20Some%20Artist", url)
+        soundcloud.assert_not_called()
+
+    def test_apple_music_artwork_failure_yields_no_art(self):
+        with (
+            mock.patch.object(presence, "_http_get", side_effect=OSError("down")),
+            mock.patch.object(presence, "_find_soundcloud_artwork") as soundcloud,
+        ):
+            self.assertIsNone(
+                presence.find_artwork(
+                    "Real Song", "Some Artist", "music.apple.com", None, "brave"
                 )
             )
         soundcloud.assert_not_called()
