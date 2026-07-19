@@ -243,15 +243,29 @@ def fallback_track(report):
     return None
 
 
+def normalize_title(t):
+    if not t:
+        return ""
+    return (
+        t.lower()
+        .replace("’", "'")
+        .replace("‘", "'")
+        .replace("“", '"')
+        .replace("”", '"')
+        .strip()
+    )
+
+
 def classify_tab(title, report):
     """Match a playing title to its reported audible browser tab."""
-    if not report:
+    if not report or not report["enabled"]:
         return None
-    tl = title.lower().strip()
-    if not tl:
+    tl = normalize_title(title)
+    if not tl or tl in ("youtube music", "soundcloud", "apple music", "youtube"):
         return None
-    for tab in report["tabs"]:
-        if tl in tab["title"].lower():
+    for tab in protocol.enabled_tabs(report):
+        cand = normalize_title(tab["title"])
+        if cand and (cand in tl or tl in cand):
             return tab
     return None
 
