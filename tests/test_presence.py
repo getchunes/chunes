@@ -129,7 +129,7 @@ class DesktopProtocolTests(unittest.TestCase):
                 {
                     "host": "music.youtube.com",
                     "mediaId": "a1B2c3D4e5F",
-                    "title": "Video Song - Video Artist - YouTube Music",
+                    "title": "Video Song | YouTube Music",
                 },
             ],
         }
@@ -148,7 +148,7 @@ class DesktopProtocolTests(unittest.TestCase):
             presence.fallback_track(youtube_report),
             (
                 "Video Song",
-                "Video Artist",
+                "",
                 "music.youtube.com",
                 "a1B2c3D4e5F",
             ),
@@ -194,6 +194,87 @@ class DesktopProtocolTests(unittest.TestCase):
 
         report["services"]["appleMusic"] = False
         self.assertIsNone(presence.protocol.untitled_service_tab(report))
+
+    def test_fallback_ignores_youtube_music_generic_placeholder_title(self):
+        # The tab title lags a beat behind real playback after switching
+        # tracks/providers; until it updates past the bare "YouTube Music"
+        # placeholder, fallback_track must not publish it as a fake track.
+        generic_report = {
+            "enabled": True,
+            "services": {"youtubeMusic": True},
+            "tabs": [
+                {
+                    "host": "music.youtube.com",
+                    "mediaId": "a1B2c3D4e5F",
+                    "title": "YouTube Music",
+                }
+            ],
+        }
+        self.assertIsNone(presence.fallback_track(generic_report))
+
+        real_report = dict(
+            generic_report,
+            tabs=[
+                {
+                    "host": "music.youtube.com",
+                    "mediaId": "a1B2c3D4e5F",
+                    "title": "Real Song | YouTube Music",
+                }
+            ],
+        )
+        self.assertEqual(
+            presence.fallback_track(real_report),
+            ("Real Song", "", "music.youtube.com", "a1B2c3D4e5F"),
+        )
+
+    def test_fallback_switches_cleanly_from_soundcloud_to_youtube_music(self):
+        # Reproduces a provider switch: SoundCloud playing, then stopped and
+        # replaced by an audible YouTube Music tab whose title hasn't caught
+        # up yet. No stale SoundCloud data or YTM placeholder junk should
+        # leak into the result at either step.
+        soundcloud_report = {
+            "enabled": True,
+            "services": {"soundcloud": True, "youtubeMusic": True},
+            "tabs": [
+                {
+                    "host": "soundcloud.com",
+                    "mediaId": None,
+                    "title": "Cloud Song by Cloud Artist",
+                }
+            ],
+        }
+        self.assertEqual(
+            presence.fallback_track(soundcloud_report),
+            ("Cloud Song", "Cloud Artist", "soundcloud.com", None),
+        )
+
+        mid_switch_report = {
+            "enabled": True,
+            "services": {"soundcloud": True, "youtubeMusic": True},
+            "tabs": [
+                {
+                    "host": "music.youtube.com",
+                    "mediaId": "a1B2c3D4e5F",
+                    "title": "YouTube Music",
+                }
+            ],
+        }
+        self.assertIsNone(presence.fallback_track(mid_switch_report))
+
+        settled_report = dict(
+            mid_switch_report,
+            tabs=[
+                {
+                    "host": "music.youtube.com",
+                    "mediaId": "a1B2c3D4e5F",
+                    "title": "New Song | YouTube Music",
+                }
+            ],
+        )
+        self.assertEqual(
+            presence.fallback_track(settled_report),
+            ("New Song", "", "music.youtube.com", "a1B2c3D4e5F"),
+        )
 
 
 class ArtworkTests(unittest.TestCase):
