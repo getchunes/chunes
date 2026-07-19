@@ -9,7 +9,7 @@ on:
         default: 1.0.2
         type: string
       confirm_unsigned:
-        description: Publish an unsigned manual-only prerelease
+        description: Publish an unsigned manual-only latest release
         required: true
         default: false
         type: boolean
@@ -176,7 +176,7 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Publish immutable unsigned manual prerelease
+    name: Publish immutable unsigned manual release
     needs: build
     runs-on: windows-2022
     timeout-minutes: 15
@@ -237,7 +237,7 @@ jobs:
           "UNSIGNED_MSI=$msi" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "UNSIGNED_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Require unused release identity and snapshot latest
+      - name: Require unused release identity
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -261,11 +261,6 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $tagRefs.Count -ne 0) {
             throw "Release tag $tag already exists or could not be checked"
           }
-          $latest = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/latest" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or -not $latest.id) {
-            throw "Could not snapshot the current automatic-release channel"
-          }
-          "PREVIOUS_LATEST_ID=$($latest.id)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Atomically create and verify exact tag
         shell: pwsh
@@ -284,7 +279,7 @@ jobs:
             throw "Created tag does not point exactly to GITHUB_SHA"
           }
 
-      - name: Create prerelease draft and upload only the unsigned MSI
+      - name: Create latest-release draft and upload only the unsigned MSI
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -294,7 +289,7 @@ jobs:
           $notes = @"
           # UNSIGNED MANUAL RELEASE - UNKNOWN PUBLISHER
 
-          **This Chunes MSI is intentionally unsigned. Windows will display Unknown publisher. It is a manual download and is not offered by the in-app updater.**
+          **This Chunes MSI is intentionally unsigned. Windows will display Unknown publisher. It must be installed manually; Chunes does not automatically install unsigned updates.**
 
           **SHA-256: $env:UNSIGNED_SHA256**
 
@@ -302,9 +297,9 @@ jobs:
 
           Privacy policy: https://github.com/getchunes/chunes/blob/main/PRIVACY.md
           "@
-          $release = gh api --method POST -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases" -f "tag_name=$tag" -f "target_commitish=$env:GITHUB_SHA" -f "name=Chunes $env:RELEASE_VERSION - UNSIGNED MANUAL" -f "body=$notes" -F draft=true -F prerelease=true -f make_latest=false | ConvertFrom-Json
+          $release = gh api --method POST -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases" -f "tag_name=$tag" -f "target_commitish=$env:GITHUB_SHA" -f "name=Chunes $env:RELEASE_VERSION - UNSIGNED MANUAL" -f "body=$notes" -F draft=true -F prerelease=false -f make_latest=true | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or -not $release.id) {
-            throw "Could not create the draft unsigned prerelease"
+            throw "Could not create the draft unsigned release"
           }
           gh release upload $tag $env:UNSIGNED_MSI
           if ($LASTEXITCODE -ne 0) {
@@ -320,14 +315,14 @@ jobs:
           $apiVersion = "2026-03-10"
           $release = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" | ConvertFrom-Json
           $expectedName = "Chunes-$env:RELEASE_VERSION-x64.msi"
-          if ($LASTEXITCODE -ne 0 -or $release.draft -ne $true -or $release.prerelease -ne $true) {
-            throw "Release is not the expected unsigned prerelease draft"
+          if ($LASTEXITCODE -ne 0 -or $release.draft -ne $true -or $release.prerelease -ne $false) {
+            throw "Release is not the expected unsigned release draft"
           }
           if ($release.assets.Count -ne 1 -or $release.assets[0].name -cne $expectedName -or $release.assets[0].digest -cne "sha256:$env:UNSIGNED_SHA256") {
             throw "GitHub's uploaded asset digest or identity does not match the unsigned MSI"
           }
 
-      - name: Reverify tag and publish without changing latest
+      - name: Reverify tag and publish as latest
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -338,12 +333,12 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $ref.ref -cne "refs/tags/$tag" -or $ref.object.type -cne "commit" -or $ref.object.sha -cne $env:GITHUB_SHA) {
             throw "Release tag changed before publication"
           }
-          gh api --method PATCH -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" -F draft=false -F prerelease=true -f make_latest=false | Out-Null
+          gh api --method PATCH -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" -F draft=false -F prerelease=false -f make_latest=true | Out-Null
           if ($LASTEXITCODE -ne 0) {
-            throw "Could not publish the unsigned manual prerelease"
+            throw "Could not publish the unsigned manual release"
           }
 
-      - name: Require immutable prerelease and unchanged automatic channel
+      - name: Require immutable latest release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -351,13 +346,13 @@ jobs:
           $apiVersion = "2026-03-10"
           $release = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" | ConvertFrom-Json
           $expectedName = "Chunes-$env:RELEASE_VERSION-x64.msi"
-          if ($LASTEXITCODE -ne 0 -or $release.draft -ne $false -or $release.prerelease -ne $true -or $release.immutable -ne $true) {
-            throw "Published unsigned release is not an immutable prerelease"
+          if ($LASTEXITCODE -ne 0 -or $release.draft -ne $false -or $release.prerelease -ne $false -or $release.immutable -ne $true) {
+            throw "Published unsigned release is not an immutable normal release"
           }
           if ($release.assets.Count -ne 1 -or $release.assets[0].name -cne $expectedName -or $release.assets[0].digest -cne "sha256:$env:UNSIGNED_SHA256") {
             throw "Immutable unsigned release asset changed"
           }
           $latest = gh api -H "X-GitHub-Api-Version: $apiVersion" "repos/$env:GITHUB_REPOSITORY/releases/latest" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or $latest.id -ne [long]$env:PREVIOUS_LATEST_ID) {
-            throw "Unsigned prerelease changed the automatic update channel"
+          if ($LASTEXITCODE -ne 0 -or $latest.id -ne [long]$env:RELEASE_ID) {
+            throw "Unsigned release was not published as latest"
           }

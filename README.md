@@ -53,7 +53,7 @@ the code is safe, or turn the unsigned MSI into a signed one.
 New releases use one of two channels. A signed stable release is published as
 `latest`. If code signing is unavailable,
 an unsigned release may instead be published as an explicitly labeled manual
-prerelease; Windows shows **Unknown publisher**. Chunes finds either kind of
+release; Windows shows **Unknown publisher**. Chunes finds either kind of
 newer published release and opens its exact GitHub release page in the default
 browser for a manual update. Every release and tag is immutable. A later signing
 transition always uses a higher version rather than replacing an unsigned
@@ -119,7 +119,7 @@ local and network data flow and the corresponding opt-outs.
 ## Update security
 
 Chunes checks published releases in `getchunes/chunes`, including explicitly
-labeled unsigned manual prereleases. When it finds a newer numeric version, it
+labeled unsigned manual releases. When it finds a newer numeric version, it
 opens that version's exact GitHub release page in the default browser. Chunes
 does not currently download an MSI, start Windows Installer, or exit during an
 update check.
@@ -211,10 +211,9 @@ handoff.
 `.github/workflows/release-unsigned.yml` is the manual fallback when code
 signing is unavailable. It requires explicit confirmation and a separate
 protected environment, proves the raw EXE, embedded EXE, and MSI are unsigned,
-and includes a versioned installer warning. It publishes an immutable GitHub
-prerelease without changing `/releases/latest`. The browser-based release check
-still finds it, while the inactive signed installer path remains ineligible to
-install it.
+and includes a versioned installer warning. It publishes an immutable normal
+GitHub release as `latest`. The browser-based release check finds it, while the
+inactive signed installer path remains ineligible to install it.
 
 Repository release immutability is enabled and must be independently confirmed
 by a maintainer before either workflow is dispatched; GitHub's scoped workflow
@@ -241,7 +240,7 @@ the Chunes product and version metadata.
 The preferred stable release path uses free code signing provided by
 [SignPath.io](https://about.signpath.io), certificate by
 [SignPath Foundation](https://signpath.org). If that service is unavailable or
-the project is not approved, the separate unsigned manual-prerelease path keeps
+the project is not approved, the separate unsigned manual-release path keeps
 releases possible without weakening automatic-update verification.
 
 - Authors and committers: [@dubsector](https://github.com/dubsector)

@@ -481,9 +481,9 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn("ls-remote --exit-code", workflow)
         self.assertIn("git/refs", workflow)
         self.assertIn('sha=$env:GITHUB_SHA', workflow)
-        self.assertIn("prerelease=true", workflow)
-        self.assertGreaterEqual(workflow.count("make_latest=false"), 2)
-        self.assertIn("PREVIOUS_LATEST_ID", workflow)
+        self.assertGreaterEqual(workflow.count("prerelease=false"), 2)
+        self.assertGreaterEqual(workflow.count("make_latest=true"), 2)
+        self.assertNotIn("PREVIOUS_LATEST_ID", workflow)
         self.assertNotIn("--latest", workflow)
         self.assertIn("$release.immutable -ne $true", workflow)
         for notice in (
@@ -492,7 +492,7 @@ class PackagingTests(unittest.TestCase):
             "immutable",
             "SHA-256",
             "checksum verifies byte equality",
-            "manual download",
+            "installed manually",
         ):
             with self.subTest(notice=notice):
                 self.assertIn(notice, workflow)
@@ -529,7 +529,7 @@ class PackagingTests(unittest.TestCase):
             "does not accept unsigned updates",
             "unsigned-manual-release",
             "No future version is reserved for signing",
-            "make_latest=false",
+            "make_latest=true",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, normalized)

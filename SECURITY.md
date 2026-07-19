@@ -35,9 +35,9 @@ Windows-trusted Authenticode signed with publisher exactly `SignPath
 Foundation`. Signed stable releases can be offered by the in-app updater.
 
 If code signing is unavailable, `.github/workflows/release-unsigned.yml` may
-publish a separately approved manual-only GitHub prerelease. It verifies that
-the raw EXE, embedded EXE, and MSI are all `NotSigned`, embeds a versioned
-**Unknown publisher** warning, and must not change `/releases/latest`. A later
+publish a separately approved manual-only normal GitHub release. It verifies
+that the raw EXE, embedded EXE, and MSI are all `NotSigned`, embeds a versioned
+**Unknown publisher** warning, and publishes it as `latest`. A later
 signed build always uses a higher version; no release or tag is replaced.
 
 Repository release immutability must be enabled and confirmed by a maintainer
@@ -48,7 +48,7 @@ unless the release reports immutable. Published asset bytes and tags are never
 replaced or reused; fixes always receive a new version. SHA-256 verifies byte
 equality with the GitHub asset but is not Authenticode publisher identity.
 
-The active in-app check includes published stable and manual-prerelease numeric
+The active in-app check includes published stable and unsigned-manual numeric
 versions. It opens a newer version's exact GitHub release page in the default
 browser and does not download or run the MSI.
 

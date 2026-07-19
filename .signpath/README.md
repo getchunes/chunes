@@ -79,9 +79,8 @@ candidate fails security or identity verification.
    version, and explicitly confirm the unsigned publication.
 4. Verify the workflow proves the raw EXE, embedded EXE, and MSI are `NotSigned`
    and that the MSI contains the versioned unsigned warning.
-5. Publish only as an immutable GitHub prerelease with `make_latest=false`.
-   Confirm `/releases/latest` did not change, so automatic updates remain
-   SignPath-only.
+5. Publish as an immutable normal GitHub release with `make_latest=true` and
+   confirm `/releases/latest` points to the new version.
 6. Test a manual install and in-place upgrade, including the Windows **Unknown
    publisher** prompt and installer warning.
 7. If signing becomes available later, use the next higher version through the
