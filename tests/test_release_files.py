@@ -207,6 +207,27 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(close.attrib["TerminateProcess"], "0")
         self.assertEqual(close.attrib["RebootPrompt"], "no")
 
+        set_cmd = self.product.find(".//w:CustomAction[@Id='SetCloseChunesCmd']", WIX_NS)
+        self.assertIsNotNone(set_cmd)
+        self.assertEqual(set_cmd.attrib.get("Property"), "WixQuietExecCmdLine")
+        self.assertEqual(set_cmd.attrib.get("Value"), '"[SystemFolder]taskkill.exe" /F /IM Chunes.exe')
+
+        close_early = self.product.find(".//w:CustomAction[@Id='CloseChunesEarly']", WIX_NS)
+        self.assertIsNotNone(close_early)
+        self.assertEqual(close_early.attrib.get("BinaryKey"), "WixCA")
+        self.assertEqual(close_early.attrib.get("DllEntry"), "WixQuietExec")
+        self.assertEqual(close_early.attrib.get("Execute"), "immediate")
+        self.assertEqual(close_early.attrib.get("Return"), "ignore")
+
+        exec_seq = self.product.find(".//w:InstallExecuteSequence", WIX_NS)
+        set_custom = exec_seq.find("w:Custom[@Action='SetCloseChunesCmd']", WIX_NS)
+        self.assertIsNotNone(set_custom)
+        self.assertEqual(set_custom.attrib.get("Before"), "CloseChunesEarly")
+
+        close_custom = exec_seq.find("w:Custom[@Action='CloseChunesEarly']", WIX_NS)
+        self.assertIsNotNone(close_custom)
+        self.assertEqual(close_custom.attrib.get("Before"), "InstallValidate")
+
     def test_unsigned_manual_warning_is_versioned_and_covers_upgrades(self):
         warning = self.product.find(
             ".//w:Dialog[@Id='UnsignedWarningDlg']", WIX_NS
