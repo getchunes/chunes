@@ -3,7 +3,7 @@
   xmlns="http://schemas.microsoft.com/wix/2006/wi"
   xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <?ifndef ProductVersion ?>
-    <?define ProductVersion="1.0.4" ?>
+    <?define ProductVersion="1.0.5" ?>
   <?endif ?>
   <?ifndef SourceDir ?>
     <?define SourceDir="..\dist" ?>
