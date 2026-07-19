@@ -146,33 +146,39 @@ class GracefulCloseTests(unittest.TestCase):
         chunes._register_close_messages(icon)
         self.assertFalse(hasattr(icon, "_message_handlers"))
 
-    def test_registered_handlers_satisfy_pystray_contract(self):
+    @mock.patch.object(chunes.ctypes.windll.user32, "DestroyWindow")
+    def test_registered_handlers_satisfy_pystray_contract(self, destroy_window):
         icon = mock.Mock()
         icon._message_handlers = {}
         chunes._register_close_messages(icon)
 
         # WM_CLOSE
-        self.assertEqual(icon._message_handlers[0x0010](None, None, None, None), 0)
+        self.assertEqual(icon._message_handlers[0x0010](123, None, None, None), 0)
         self.assertTrue(chunes._tray_stop.is_set())
         icon.stop.assert_called_once_with()
+        destroy_window.assert_called_once_with(123)
 
         chunes._tray_stop.clear()
         icon.stop.reset_mock()
+        destroy_window.reset_mock()
 
         # WM_QUERYENDSESSION
-        self.assertEqual(icon._message_handlers[0x0011](None, None, None, None), 1)
+        self.assertEqual(icon._message_handlers[0x0011](123, None, None, None), 1)
         self.assertFalse(chunes._tray_stop.is_set())
         icon.stop.assert_not_called()
+        destroy_window.assert_not_called()
 
         # WM_ENDSESSION (wparam=False)
-        self.assertEqual(icon._message_handlers[0x0016](None, None, 0, None), 0)
+        self.assertEqual(icon._message_handlers[0x0016](123, None, 0, None), 0)
         self.assertFalse(chunes._tray_stop.is_set())
         icon.stop.assert_not_called()
+        destroy_window.assert_not_called()
 
         # WM_ENDSESSION (wparam=True)
-        self.assertEqual(icon._message_handlers[0x0016](None, None, 1, None), 0)
+        self.assertEqual(icon._message_handlers[0x0016](123, None, 1, None), 0)
         self.assertTrue(chunes._tray_stop.is_set())
         icon.stop.assert_called_once_with()
+        destroy_window.assert_called_once_with(123)
 
 
 if __name__ == "__main__":
