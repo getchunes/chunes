@@ -2,8 +2,8 @@
 "Listening to" status, similar to the built-in Spotify integration.
 
 Reads track metadata from the Windows media transport controls (the same data
-shown in the volume overlay popup), so it works with anything: SoundCloud or
-YouTube Music in a browser, desktop apps, etc.
+shown in the volume overlay popup), so it works with anything: SoundCloud,
+YouTube Music or Apple Music in a browser, desktop apps, etc.
 """
 
 import asyncio
@@ -349,6 +349,34 @@ def _find_soundcloud_artwork(title, artist):
     return art
 
 
+def _find_apple_music_artwork(title, artist):
+    """Best-effort Apple Music artwork from the public iTunes Search API."""
+    art = None
+    try:
+        q = urllib.parse.quote(f"{title} {artist}".strip())
+        data = json.loads(_http_get(
+            "https://itunes.apple.com/search"
+            f"?term={q}&media=music&entity=song&limit=5"
+        ))
+        tl = title.lower()
+        best = None
+        for t in data.get("results", []):
+            cand = t.get("artworkUrl100")
+            if not isinstance(cand, str) or not cand:
+                continue
+            ct = (t.get("trackName") or "").lower()
+            if ct and (ct in tl or tl in ct):
+                best = cand
+                break
+            if best is None:
+                best = cand
+        if best:
+            art = best.replace("100x100", "500x500")
+    except Exception as e:
+        print(f"Apple Music artwork lookup failed: {type(e).__name__}: {e}")
+    return art
+
+
 def _youtube_music_client():
     """Return public YouTube Music web client values from its own page."""
     global _ytm_client
@@ -463,6 +491,8 @@ def find_artwork(title, artist, host=None, media_id=None, source=None):
     service = protocol.service_for_host(host)
     if service == "youtubeMusic":
         art = _find_youtube_music_artwork(media_id)
+    elif service == "appleMusic":
+        art = _find_apple_music_artwork(title, artist)
     elif service == "soundcloud" or not protocol.is_browser_source(source):
         art = _find_soundcloud_artwork(title, artist)
     else:
@@ -575,6 +605,11 @@ async def main():
         if track:
             title, artist, pos, dur, source = track
             tab = classify_tab(title, report)
+            if tab is None and protocol.is_browser_source(source):
+                # Apple Music's web player keeps the page name in the tab
+                # title, so its playing track never matches; an audible
+                # Apple Music tab claims the unmatched session instead.
+                tab = protocol.untitled_service_tab(report)
             if tab:
                 host = tab["host"]
                 media_id = tab["mediaId"]

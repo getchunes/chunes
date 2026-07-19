@@ -2,9 +2,9 @@
 
 <img src="assets/logo.svg" alt="Chunes logo" width="160">
 
-Chunes shows SoundCloud and YouTube Music playback as a Discord **Listening to**
-status on Windows. It runs in the notification area, clears the status when
-playback pauses, and labels both supported services correctly.
+Chunes shows SoundCloud, YouTube Music and Apple Music playback as a Discord
+**Listening to** status on Windows. It runs in the notification area, clears the
+status when playback pauses, and labels the supported services correctly.
 
 ## Requirements
 
@@ -78,7 +78,8 @@ the exact media type `application/json`:
   },
   "tabs": [
     {"host": "soundcloud.com", "mediaId": null, "title": "Track by Artist"},
-    {"host": "music.youtube.com", "mediaId": "a1B2c3D4e5F", "title": "Track - Artist"}
+    {"host": "music.youtube.com", "mediaId": "a1B2c3D4e5F", "title": "Track - Artist"},
+    {"host": "music.apple.com", "mediaId": null, "title": "Album - Apple Music"}
   ]
 }
 ```
@@ -86,7 +87,16 @@ the exact media type `application/json`:
 While a report is fresh, the extension's master switch, per-service switches,
 and reported audible tabs are authoritative for browser media. Disabled
 services, unrelated browser media, and paused tabs are suppressed. A fresh
-report expires after 90 seconds. The tray displays **Chune ID: on**, **off**, or
+report expires after 90 seconds.
+
+Apple Music has no flag in `services`; Chune ID reports `music.apple.com` tabs
+only while its Apple Music switch is on, which keeps the payload shape valid
+for older Chunes versions. The Apple Music web player also keeps the page name
+in the tab title while playing, so Chunes attributes a playing browser session
+that matches no reported tab title to the audible Apple Music tab. When another
+tab owns the browser media session, an Apple Music track cannot be rebuilt
+from the tab title the way SoundCloud and YouTube Music tracks are, so the
+status clears instead. The tray displays **Chune ID: on**, **off**, or
 **not connected** so the extension master state is visible without duplicating
 its control in the app.
 
@@ -107,8 +117,9 @@ the correct service when another tab owns the browser media session.
   unrelated same-named registry values untouched.
 - **Automatically check for updates** persists the startup update preference.
 - **Check for updates now** performs an immediate manual check.
-- **Look up online album art** persists whether Chunes may search SoundCloud or,
-  for an identified YouTube Music track, request its exact square music artwork.
+- **Look up online album art** persists whether Chunes may search SoundCloud,
+  search the iTunes Search API for an identified Apple Music track, or request
+  the exact square music artwork of an identified YouTube Music track.
 - **Open log** opens `%LOCALAPPDATA%\Chunes\chunes.log`.
 - **Quit** clears the process from the notification area and stops Chunes.
 
@@ -253,14 +264,15 @@ changes, reviews changes from other contributors, and manually approves every
 code-signing request. The Chunes project acknowledges and accepts the
 [SignPath Foundation conditions for open-source code signing](https://signpath.org/terms).
 
-Chunes transfers information only for Discord presence, optional SoundCloud or
-YouTube Music album artwork, and optional GitHub update functions described in the
-privacy policy. The installer and tray provide the documented opt-outs.
+Chunes transfers information only for Discord presence, optional SoundCloud,
+YouTube Music, or Apple Music album artwork, and optional GitHub update
+functions described in the privacy policy. The installer and tray provide the
+documented opt-outs.
 
 ## License and notices
 
 Chunes is licensed under the [Apache License 2.0](LICENSE). Third-party software,
 the Bootstrap-derived note geometry, and service trademarks are documented in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Chunes is not affiliated with,
-sponsored by, or endorsed by Discord, SoundCloud, Google, YouTube, Microsoft, or
-GitHub.
+sponsored by, or endorsed by Discord, SoundCloud, Google, YouTube, Apple,
+Microsoft, or GitHub.
