@@ -635,6 +635,9 @@ async def main():
             if tab:
                 host = tab["host"]
                 media_id = tab["mediaId"]
+            if host is None and last is not None and last[0][0] == title and last[0][1] == artist:
+                host = last[0][2]
+                media_id = last[0][3]
             if not protocol.browser_track_is_allowed(source, report, host):
                 if last is not None:
                     print(
