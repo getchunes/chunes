@@ -201,8 +201,10 @@ async def _handle_tab_report(reader, writer):
             _tab_state.clear()
             _tab_state.update(report)
             _tab_reported_at = time.time()
-            set_status(extension_enabled=report["enabled"])
-            reply = _http_reply(204)
+            with _status_lock:
+                current_track = status.get("track")
+            res_body = json.dumps({"status": "ok", "track": current_track}, separators=(",", ":")).encode()
+            reply = _http_reply(200, res_body)
     except protocol.ProtocolError as exc:
         reply = _http_reply(exc.status)
     except (
@@ -243,15 +245,29 @@ def fallback_track(report):
     return None
 
 
+def normalize_title(t):
+    if not t:
+        return ""
+    return (
+        t.lower()
+        .replace("’", "'")
+        .replace("‘", "'")
+        .replace("“", '"')
+        .replace("”", '"')
+        .strip()
+    )
+
+
 def classify_tab(title, report):
     """Match a playing title to its reported audible browser tab."""
-    if not report:
+    if not report or not report["enabled"]:
         return None
-    tl = title.lower().strip()
-    if not tl:
+    tl = normalize_title(title)
+    if not tl or tl in ("youtube music", "soundcloud", "apple music", "youtube"):
         return None
-    for tab in report["tabs"]:
-        if tl in tab["title"].lower():
+    for tab in protocol.enabled_tabs(report):
+        cand = normalize_title(tab["title"])
+        if cand and (cand in tl or tl in cand):
             return tab
     return None
 
@@ -319,9 +335,10 @@ def _soundcloud_client_id():
     return None
 
 
-def _find_soundcloud_artwork(title, artist):
-    """Best-effort SoundCloud artwork for the current title and artist."""
+def _find_soundcloud_info(title, artist):
+    """Best-effort SoundCloud artwork and duration for the current title and artist."""
     art = None
+    dur = 0.0
     try:
         cid = _soundcloud_client_id()
         if cid:
@@ -331,23 +348,31 @@ def _find_soundcloud_artwork(title, artist):
                 f"?q={q}&client_id={cid}&limit=5"
             ))
             tl = title.lower()
-            best = None
+            best_art = None
+            best_dur = 0.0
             for t in data.get("collection", []):
                 cand = (t.get("artwork_url")
                         or t.get("user", {}).get("avatar_url"))
-                if not cand:
-                    continue
+                cand_dur = (t.get("duration") or 0) / 1000.0
                 ct = (t.get("title") or "").lower()
                 if ct and (ct in tl or tl in ct):
-                    best = cand
+                    if cand:
+                        best_art = cand
+                    best_dur = cand_dur
                     break
-                if best is None:
-                    best = cand
-            if best:
-                art = best.replace("-large.", "-t500x500.")
+                if best_art is None and cand:
+                    best_art = cand
+                    best_dur = cand_dur
+            if best_art:
+                art = best_art.replace("-large.", "-t500x500.")
+            dur = best_dur
     except Exception as e:
         print(f"SoundCloud artwork lookup failed: {type(e).__name__}: {e}")
-    return art
+    return art, dur
+
+
+def _find_soundcloud_artwork(title, artist):
+    return _find_soundcloud_info(title, artist)[0]
 
 
 def _youtube_music_client():
@@ -462,9 +487,10 @@ def _find_youtube_music_artwork(video_id):
         return None
 
 
-def _find_apple_music_artwork(title, artist):
-    """Best-effort Apple Music artwork from the public iTunes Search API."""
+def _find_apple_music_info(title, artist):
+    """Best-effort Apple Music artwork and duration from the public iTunes Search API."""
     art = None
+    dur = 0.0
     try:
         q = urllib.parse.quote(f"{title} {artist}".strip())
         data = json.loads(_http_get(
@@ -472,43 +498,68 @@ def _find_apple_music_artwork(title, artist):
             f"?term={q}&media=music&entity=song&limit=5"
         ))
         tl = title.lower()
-        best = None
+        best_art = None
+        best_dur = 0.0
         for t in data.get("results", []):
-            cand = t.get("artworkUrl100")
-            if not isinstance(cand, str) or not cand:
-                continue
+            cand_art = t.get("artworkUrl100")
+            cand_dur = (t.get("trackTimeMillis") or 0) / 1000.0
             ct = (t.get("trackName") or "").lower()
             if ct and (ct in tl or tl in ct):
-                best = cand
+                if isinstance(cand_art, str) and cand_art:
+                    best_art = cand_art
+                best_dur = cand_dur
                 break
-            if best is None:
-                best = cand
-        if best:
-            art = best.replace("100x100", "500x500")
+            if best_art is None and isinstance(cand_art, str) and cand_art:
+                best_art = cand_art
+                best_dur = cand_dur
+        if best_art:
+            art = best_art.replace("100x100", "500x500")
+        dur = best_dur
     except Exception as e:
         print(f"Apple Music artwork lookup failed: {type(e).__name__}: {e}")
-    return art
+    return art, dur
 
 
-def find_artwork(title, artist, host=None, media_id=None, source=None):
-    """Return source-specific online album artwork for the current track."""
+def _find_apple_music_artwork(title, artist):
+    return _find_apple_music_info(title, artist)[0]
+
+
+def find_artwork_and_info(title, artist, host=None, media_id=None, source=None):
+    """Return (art_url, duration_s) for the track with cross-provider fallbacks."""
     key = (host, media_id, source, title, artist)
     if key in _artwork_cache:
         return _artwork_cache[key]
 
     service = protocol.service_for_host(host)
-    if service == "youtubeMusic":
-        art = _find_youtube_music_artwork(media_id)
-    elif service == "appleMusic":
-        art = _find_apple_music_artwork(title, artist)
-    elif service == "soundcloud" or not protocol.is_browser_source(source):
-        art = _find_soundcloud_artwork(title, artist)
-    else:
-        art = None
+    art = None
+    dur = 0.0
 
-    _artwork_cache[key] = art
+    if service == "youtubeMusic":
+        if media_id:
+            art = _find_youtube_music_artwork(media_id)
+        if not art:
+            art, dur = _find_apple_music_info(title, artist)
+            if not art:
+                art, dur = _find_soundcloud_info(title, artist)
+    elif service == "appleMusic":
+        art, dur = _find_apple_music_info(title, artist)
+        if not art:
+            art, dur = _find_soundcloud_info(title, artist)
+    elif service == "soundcloud" or not protocol.is_browser_source(source):
+        art, dur = _find_soundcloud_info(title, artist)
+        if not art:
+            art, dur = _find_apple_music_info(title, artist)
+
+    res = (art, dur)
+    _artwork_cache[key] = res
     if len(_artwork_cache) > 500:
         _artwork_cache.pop(next(iter(_artwork_cache)))
+    return res
+
+
+def find_artwork(title, artist, host=None, media_id=None, source=None):
+    """Return source-specific online album artwork for the current track."""
+    art, _ = find_artwork_and_info(title, artist, host, media_id, source)
     return art
 
 
@@ -612,15 +663,22 @@ async def main():
         media_id = None
         if track:
             title, artist, pos, dur, source = track
-            tab = classify_tab(title, report)
+            if normalize_title(title) in ("youtube music", "soundcloud", "apple music", "youtube"):
+                track = None
+            else:
+                tab = classify_tab(title, report)
             if tab is None and protocol.is_browser_source(source):
-                # Apple Music's web player keeps the page name in the tab
-                # title, so its playing track never matches; an audible
-                # Apple Music tab claims the unmatched session instead.
-                tab = protocol.untitled_service_tab(report)
+                enabled = protocol.enabled_tabs(report)
+                if len(enabled) == 1:
+                    tab = enabled[0]
+                else:
+                    tab = protocol.untitled_service_tab(report)
             if tab:
                 host = tab["host"]
                 media_id = tab["mediaId"]
+            if host is None and last is not None and last[0][0] == title and last[0][1] == artist:
+                host = last[0][2]
+                media_id = last[0][3]
             if not protocol.browser_track_is_allowed(source, report, host):
                 if last is not None:
                     print(
@@ -659,7 +717,7 @@ async def main():
             # Re-send only on track change or a seek (start timestamp moved
             # by more than a few seconds); Discord drops clients that spam
             # SET_ACTIVITY every poll.
-            key = (title, artist, host, media_id, use_artwork)
+            key = (title, artist, host, media_id, use_artwork, dur > 0)
             # Re-send periodically even if unchanged: Discord forgets the
             # activity if the client reloads, and we only notice the dead
             # pipe when we next write to it.
@@ -676,10 +734,15 @@ async def main():
                         track=f"{title} - {artist}" if artist else title
                     )
                 art = None
-                if use_artwork:
-                    art = await asyncio.to_thread(
-                        find_artwork, title, artist, host, media_id, source
-                    )
+                info_dur = 0.0
+                art, info_dur = await asyncio.to_thread(
+                    find_artwork_and_info, title, artist, host, media_id, source
+                )
+                if not use_artwork:
+                    art = None
+                if dur <= 0 and info_dur > 0:
+                    dur = info_dur
+                    start = int(now - pos) if pos > 0 else int(now)
                 kwargs = dict(
                     activity_type=ActivityType.LISTENING,
                     details=title[:128],
