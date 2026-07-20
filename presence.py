@@ -240,7 +240,7 @@ def fallback_track(report):
             title, artist = t.rsplit(" by ", 1)
             return title.strip(), artist.strip(), host, tab["mediaId"]
         if service == "youtubeMusic":
-            t = re.sub(r"\s*\|\s*YouTube Music$", "", t).strip()
+            t = re.sub(r"\s*[\|-]\s*YouTube Music$", "", t, flags=re.IGNORECASE).strip()
             if normalize_title(t) in ("", "youtube music", "youtube"):
                 continue
             if " - " in t:
@@ -672,25 +672,25 @@ async def main():
                 track = None
             else:
                 tab = classify_tab(title, report)
-            if tab is None and protocol.is_browser_source(source):
-                enabled = protocol.enabled_tabs(report)
-                if len(enabled) == 1:
-                    tab = enabled[0]
-                else:
-                    tab = protocol.untitled_service_tab(report)
-            if tab:
-                host = tab["host"]
-                media_id = tab["mediaId"]
-            if host is None and last is not None and last[0][0] == title and last[0][1] == artist:
-                host = last[0][2]
-                media_id = last[0][3]
-            if not protocol.browser_track_is_allowed(source, report, host):
-                if last is not None:
-                    print(
-                        "Ignoring disabled or non-music browser source: "
-                        f"{title[:60]}"
-                    )
-                track = None
+                if tab is None and protocol.is_browser_source(source):
+                    enabled = protocol.enabled_tabs(report)
+                    if len(enabled) == 1:
+                        tab = enabled[0]
+                    else:
+                        tab = protocol.untitled_service_tab(report)
+                if tab:
+                    host = tab["host"]
+                    media_id = tab["mediaId"]
+                if host is None and last is not None and last[0][0] == title and last[0][1] == artist:
+                    host = last[0][2]
+                    media_id = last[0][3]
+                if not protocol.browser_track_is_allowed(source, report, host):
+                    if last is not None:
+                        print(
+                            "Ignoring disabled or non-music browser source: "
+                            f"{title[:60]}"
+                        )
+                    track = None
         if not track:
             # A blocked video may be hogging the browser's only media
             # session; the extension still knows if a music tab is audible.
