@@ -594,17 +594,27 @@ async def get_playing_track(allowed_sources):
         # position is a snapshot taken at last_updated_time, not "now";
         # browsers refresh it infrequently, so extrapolate forward.
         pos = tl.position.total_seconds()
+        dur = tl.end_time.total_seconds()
         try:
             elapsed = time.time() - tl.last_updated_time.timestamp()
-            if 0 < elapsed < 3600:
+            # Only extrapolate forward if last_updated_time is recent (< 15s)
+            # or if position is already past the initial track start window (> 15s).
+            # Inactive background tabs (e.g. Apple Music) update media properties
+            # and reset position to 0 on track change, but leave last_updated_time
+            # pointing to when the previous track started.
+            if 0 < elapsed < 15:
+                pos += elapsed
+            elif 0 < elapsed < 3600 and pos > 15:
                 pos += elapsed
         except (OSError, OverflowError, ValueError):
             pass
+        if dur > 0 and pos >= dur:
+            pos = 0.0
         return (
             props.title,
             props.artist or "",
             pos,
-            tl.end_time.total_seconds(),
+            dur,
             source,
         )
     return None
@@ -748,7 +758,7 @@ async def main():
                     art = None
                 if dur <= 0 and info_dur > 0:
                     dur = info_dur
-                    start = int(now - pos) if pos > 0 else int(now)
+                    start = int(now - pos) if 0 < pos < dur else int(now)
                 kwargs = dict(
                     activity_type=ActivityType.LISTENING,
                     details=title[:128],

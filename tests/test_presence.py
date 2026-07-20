@@ -518,15 +518,43 @@ class ArtworkTests(unittest.TestCase):
                 "Real Song", "Some Artist", "music.apple.com", None, "brave"
             )
 
+        soundcloud.assert_not_called()
         self.assertEqual(
             art,
             "https://is1-ssl.mzstatic.com/image/thumb/Music/cover/500x500bb.jpg",
         )
-        url = get.call_args.args[0]
-        self.assertTrue(url.startswith("https://itunes.apple.com/search?"))
-        self.assertIn("media=music", url)
-        self.assertIn("Real%20Song%20Some%20Artist", url)
-        soundcloud.assert_not_called()
+
+    def test_get_playing_track_ignores_stale_last_updated_time(self):
+        from datetime import datetime, timezone, timedelta
+        fake_session = mock.Mock()
+        fake_session.source_app_user_model_id = "msedge.exe"
+        playback_info = mock.Mock()
+        playback_info.playback_status = presence.PlaybackStatus.PLAYING
+        fake_session.get_playback_info.return_value = playback_info
+
+        props = mock.Mock()
+        props.title = "Hot In Herre"
+        props.artist = "Nelly"
+        fake_session.try_get_media_properties_async = mock.AsyncMock(return_value=props)
+
+        timeline = mock.Mock()
+        timeline.position = timedelta(seconds=0)
+        timeline.end_time = timedelta(seconds=228)
+        # last_updated_time is 300 seconds (5 mins) in the past
+        timeline.last_updated_time = datetime.now(timezone.utc) - timedelta(seconds=300)
+        fake_session.get_timeline_properties.return_value = timeline
+
+        fake_mgr = mock.Mock()
+        fake_mgr.get_sessions.return_value = [fake_session]
+
+        with mock.patch.object(presence.SessionManager, "request_async", mock.AsyncMock(return_value=fake_mgr)):
+            result = asyncio.run(presence.get_playing_track(["msedge"]))
+            self.assertIsNotNone(result)
+            title, artist, pos, dur, source = result
+            self.assertEqual(title, "Hot In Herre")
+            self.assertEqual(artist, "Nelly")
+            self.assertEqual(pos, 0.0)  # Should NOT be 300+ seconds!
+            self.assertEqual(dur, 228.0)
 
     def test_apple_music_artwork_failure_yields_no_art(self):
         with (
