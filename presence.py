@@ -52,7 +52,7 @@ DEFAULT_CONFIG = {
 }
 
 # Live state for the tray app.
-status = {"track": None, "extension_enabled": None}
+status = {"track": None, "host": None, "extension_enabled": None}
 _status_lock = threading.Lock()
 
 
@@ -203,7 +203,11 @@ async def _handle_tab_report(reader, writer):
             _tab_reported_at = time.time()
             with _status_lock:
                 current_track = status.get("track")
-            res_body = json.dumps({"status": "ok", "track": current_track}, separators=(",", ":")).encode()
+                current_host = status.get("host")
+            res_body = json.dumps(
+                {"status": "ok", "track": current_track, "host": current_host},
+                separators=(",", ":"),
+            ).encode()
             reply = _http_reply(200, res_body)
     except protocol.ProtocolError as exc:
         reply = _http_reply(exc.status)
@@ -732,7 +736,8 @@ async def main():
                 if last is None or last[0][:2] != key[:2]:
                     print(f"Now playing: {title} - {artist} ({source})")
                     set_status(
-                        track=f"{title} - {artist}" if artist else title
+                        track=f"{title} - {artist}" if artist else title,
+                        host=host,
                     )
                 art = None
                 info_dur = 0.0
@@ -764,7 +769,7 @@ async def main():
             if last is not None:
                 print("Playback stopped, clearing status.")
                 last = None
-                set_status(track=None)
+                set_status(track=None, host=None)
                 await send(lambda r: r.clear())
 
         await asyncio.sleep(POLL_SECONDS)

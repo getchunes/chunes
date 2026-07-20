@@ -38,6 +38,50 @@ class FakeClient:
         self.sent.append((opcode, payload))
 
 
+class FakeWriter:
+    def __init__(self):
+        self.written = b""
+
+    def write(self, data):
+        self.written += data
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        pass
+
+    async def wait_closed(self):
+        pass
+
+
+def tab_report_request(report):
+    body = json.dumps(report).encode()
+    head = (
+        "POST /tabs HTTP/1.1\r\n"
+        "Host: 127.0.0.1:52846\r\n"
+        "Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        "\r\n"
+    ).encode("ascii")
+    return head + body
+
+
+async def _run_tab_report(report):
+    reader = asyncio.StreamReader()
+    reader.feed_data(tab_report_request(report))
+    reader.feed_eof()
+    writer = FakeWriter()
+    await presence._handle_tab_report(reader, writer)
+    return writer.written
+
+
+def send_tab_report(report):
+    written = asyncio.run(_run_tab_report(report))
+    header, _, payload = written.partition(b"\r\n\r\n")
+    return header, json.loads(payload)
+
+
 class DiscordFrameTests(unittest.TestCase):
     def read(self, *frames, error=None):
         client = FakeClient(b"".join(frames), error)
@@ -115,6 +159,36 @@ class DesktopProtocolTests(unittest.TestCase):
                 reply = presence._http_reply(status, b"{}" if status == 200 else b"")
                 self.assertIn(b"X-Chunes-Protocol: 2\r\n", reply)
         self.assertNotIn(b"X-Chunes-Protocol", presence._http_reply(400))
+
+    def test_tab_report_response_carries_current_track_and_host(self):
+        presence.set_status(track="Real Song - Real Artist", host="music.youtube.com")
+        report = {
+            "enabled": True,
+            "services": {"appleMusic": False, "soundcloud": False, "youtubeMusic": True},
+            "tabs": [],
+        }
+        header, payload = send_tab_report(report)
+        self.assertIn(b"200 OK", header)
+        self.assertEqual(
+            payload,
+            {
+                "status": "ok",
+                "track": "Real Song - Real Artist",
+                "host": "music.youtube.com",
+            },
+        )
+
+    def test_tab_report_response_omits_track_and_host_when_stopped(self):
+        presence.set_status(track=None, host=None)
+        report = {
+            "enabled": True,
+            "services": {"appleMusic": False, "soundcloud": False, "youtubeMusic": False},
+            "tabs": [],
+        }
+        _, payload = send_tab_report(report)
+        self.assertEqual(
+            payload, {"status": "ok", "track": None, "host": None}
+        )
 
     def test_classification_fallback_and_labels_cover_both_services(self):
         report = {
