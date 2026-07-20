@@ -227,6 +227,26 @@ class DesktopProtocolTests(unittest.TestCase):
                 "a1B2c3D4e5F",
             ),
         )
+        youtube_dash_report = {
+            "enabled": True,
+            "services": {"soundcloud": True, "youtubeMusic": True},
+            "tabs": [
+                {
+                    "host": "music.youtube.com",
+                    "mediaId": "a1B2c3D4e5F",
+                    "title": "My Track - My Artist - YouTube Music",
+                }
+            ],
+        }
+        self.assertEqual(
+            presence.fallback_track(youtube_dash_report),
+            (
+                "My Track",
+                "My Artist",
+                "music.youtube.com",
+                "a1B2c3D4e5F",
+            ),
+        )
         self.assertEqual(
             presence.protocol.service_label_for_host("soundcloud.com"),
             "SoundCloud",
