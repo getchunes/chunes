@@ -693,6 +693,35 @@ def apple_locked_duration(track_key, gsmtc_dur, info_dur, locks):
     return dur
 
 
+# A MusicKit sample older than this is treated as gone (tab closed, extension
+# reloaded, or the page wedged) and the GSMTC anchor workaround takes over.
+# The extension only pushes a report when playback changes meaningfully, so a
+# steadily playing sample is normally up to a full report period (~30s) old
+# and extrapolates accurately; a couple of missed periods means trouble.
+# Small negative ages are tolerated: the sample is taken on the browser's
+# clock a report cycle before we compare it against ours.
+APPLE_EXTENSION_TIMING_MAX_AGE_SECONDS = 75
+
+
+def apple_extension_timing(tab, now):
+    """(position, duration) measured in-page by the extension, or None.
+
+    The extension reads the Apple Music web player's own MusicKit state, the
+    only source that reports real per-track position and duration (the OS
+    media session runs a queue-wide counter and misreports duration). A
+    playing sample is extrapolated to now; a paused one is used as-is. A
+    missing or stale sample returns None so the caller can fall back to the
+    GSMTC anchor workaround."""
+    if not tab or "position" not in tab:
+        return None
+    age = now - tab["sampledAt"] / 1000.0
+    if not -5 <= age <= APPLE_EXTENSION_TIMING_MAX_AGE_SECONDS:
+        return None
+    position = tab["position"] + (max(age, 0.0) if tab["playing"] else 0.0)
+    duration = tab["duration"] or 0.0
+    return position, duration
+
+
 async def main():
     cfg = load_config()
     client_id = cfg["client_id"]
@@ -799,20 +828,37 @@ async def main():
             now = time.time()
             use_artwork = settings.artwork_enabled()
             is_apple = protocol.service_for_host(host) == "appleMusic"
+            ext_timing = None
             # Fallback tracks have no position; pin start to 0 so the
             # unchanged check stays stable and no timestamps are sent.
             if source.startswith("tab:"):
                 start = 0
             elif is_apple:
-                # Apple's queue-wide position counter is not a reliable offset
-                # into the current song; anchor to first-seen wall clock, back-
-                # dated to the previous track's end on a gapless change.
-                prev = None
-                if last_apple_key is not None and last_apple_key != (title, artist):
-                    prev_start = apple_starts.get(last_apple_key)
-                    if prev_start is not None:
-                        prev = (prev_start, apple_durs.get(last_apple_key, 0.0))
-                start = apple_track_start((title, artist), now, apple_starts, prev)
+                ext_timing = apple_extension_timing(tab, now)
+                if ext_timing is not None:
+                    # The extension read the real position from the page's
+                    # MusicKit player; anchor directly to it. Keeping the
+                    # anchor and lock dicts current means a lost sample later
+                    # hands the GSMTC workaround an accurate starting point.
+                    start = int(now - ext_timing[0])
+                    apple_starts[(title, artist)] = start
+                    if len(apple_starts) > 100:
+                        apple_starts.pop(next(iter(apple_starts)))
+                    if ext_timing[1] > 0:
+                        apple_durs[(title, artist)] = ext_timing[1]
+                        if len(apple_durs) > 100:
+                            apple_durs.pop(next(iter(apple_durs)))
+                else:
+                    # Apple's queue-wide position counter is not a reliable
+                    # offset into the current song; anchor to first-seen wall
+                    # clock, back-dated to the previous track's end on a
+                    # gapless change.
+                    prev = None
+                    if last_apple_key is not None and last_apple_key != (title, artist):
+                        prev_start = apple_starts.get(last_apple_key)
+                        if prev_start is not None:
+                            prev = (prev_start, apple_durs.get(last_apple_key, 0.0))
+                    start = apple_track_start((title, artist), now, apple_starts, prev)
             else:
                 start = int(now - pos)
             last_apple_key = (title, artist) if is_apple else None
@@ -848,12 +894,16 @@ async def main():
                 if not use_artwork:
                     art = None
                 if is_apple:
-                    # GSMTC's Apple duration is late and flips mid-song; lock the
-                    # first trusted value (iTunes-preferred) without moving the
-                    # anchored start.
-                    dur = apple_locked_duration(
-                        (title, artist), dur, info_dur, apple_durs
-                    )
+                    if ext_timing is not None and ext_timing[1] > 0:
+                        # MusicKit reports the track's real duration directly.
+                        dur = ext_timing[1]
+                    else:
+                        # GSMTC's Apple duration is late and flips mid-song;
+                        # lock the first trusted value (iTunes-preferred)
+                        # without moving the anchored start.
+                        dur = apple_locked_duration(
+                            (title, artist), dur, info_dur, apple_durs
+                        )
                 elif dur <= 0 and info_dur > 0:
                     dur = info_dur
                     start = int(now - pos) if 0 < pos < dur else int(now)

@@ -153,11 +153,11 @@ class DiscordFrameTests(unittest.TestCase):
 
 
 class DesktopProtocolTests(unittest.TestCase):
-    def test_success_responses_advertise_protocol_v2(self):
+    def test_success_responses_advertise_protocol_v3(self):
         for status in (200, 204):
             with self.subTest(status=status):
                 reply = presence._http_reply(status, b"{}" if status == 200 else b"")
-                self.assertIn(b"X-Chunes-Protocol: 2\r\n", reply)
+                self.assertIn(b"X-Chunes-Protocol: 3\r\n", reply)
         self.assertNotIn(b"X-Chunes-Protocol", presence._http_reply(400))
 
     def test_tab_report_response_carries_current_track_and_host(self):
@@ -733,6 +733,63 @@ class AppleTimingHelperTests(unittest.TestCase):
         # GSMTC populates: lock the first non-zero value against later flips.
         self.assertEqual(presence.apple_locked_duration(key, 250.0, 0.0, locks), 250.0)
         self.assertEqual(presence.apple_locked_duration(key, 999.0, 0.0, locks), 250.0)
+
+
+class AppleExtensionTimingTests(unittest.TestCase):
+    NOW = 1_750_000_010.0
+
+    def tab(self, **overrides):
+        tab = {
+            "host": "music.apple.com",
+            "mediaId": None,
+            "title": "Apple Music",
+            "position": 42.0,
+            "duration": 207.0,
+            "playing": True,
+            # Sampled 2 seconds before NOW.
+            "sampledAt": 1_750_000_008_000.0,
+        }
+        tab.update(overrides)
+        return tab
+
+    def test_playing_sample_extrapolates_to_now(self):
+        self.assertEqual(
+            presence.apple_extension_timing(self.tab(), self.NOW),
+            (44.0, 207.0),
+        )
+
+    def test_paused_sample_is_used_as_is(self):
+        self.assertEqual(
+            presence.apple_extension_timing(self.tab(playing=False), self.NOW),
+            (42.0, 207.0),
+        )
+
+    def test_missing_duration_reports_zero(self):
+        self.assertEqual(
+            presence.apple_extension_timing(self.tab(duration=None), self.NOW),
+            (44.0, 0.0),
+        )
+
+    def test_slight_clock_skew_is_tolerated_without_rewinding(self):
+        # Sampled "3 seconds in the future" on the browser's clock: position
+        # must not be extrapolated backwards.
+        tab = self.tab(sampledAt=1_750_000_013_000.0)
+        self.assertEqual(presence.apple_extension_timing(tab, self.NOW), (42.0, 207.0))
+
+    def test_stale_sample_returns_none(self):
+        tab = self.tab(sampledAt=1_750_000_008_000.0 - 120_000)
+        self.assertIsNone(presence.apple_extension_timing(tab, self.NOW))
+
+    def test_far_future_sample_returns_none(self):
+        tab = self.tab(sampledAt=1_750_000_008_000.0 + 60_000)
+        self.assertIsNone(presence.apple_extension_timing(tab, self.NOW))
+
+    def test_tab_without_playback_fields_returns_none(self):
+        tab = {"host": "music.apple.com", "mediaId": None, "title": "Apple Music"}
+        self.assertIsNone(presence.apple_extension_timing(tab, self.NOW))
+
+    def test_missing_tab_returns_none(self):
+        self.assertIsNone(presence.apple_extension_timing(None, self.NOW))
 
 
 if __name__ == "__main__":
