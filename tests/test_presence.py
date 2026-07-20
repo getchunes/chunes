@@ -578,5 +578,134 @@ class ArtworkTests(unittest.TestCase):
         soundcloud.assert_not_called()
 
 
+class TitleMatchTests(unittest.TestCase):
+    def test_exact_and_normalized_titles_match(self):
+        self.assertTrue(presence._titles_match("Real Song", "real song"))
+        self.assertTrue(presence._titles_match("It's Mine", "It’s Mine"))
+
+    def test_high_coverage_substring_matches(self):
+        # A media session reports "HUMBLE" for the track spelled "HUMBLE.":
+        # the shorter covers 6/7 of the longer, above the floor.
+        self.assertTrue(presence._titles_match("HUMBLE", "HUMBLE."))
+
+    def test_low_coverage_substring_is_rejected(self):
+        # "Gimme Dat" covers only 0.64 of "Gimme Dat Ting".
+        self.assertFalse(presence._titles_match("Gimme Dat Ting", "Gimme Dat"))
+
+    def test_unrelated_titles_do_not_match(self):
+        self.assertFalse(presence._titles_match("365", "party 4 u"))
+
+    def test_empty_titles_never_match(self):
+        self.assertFalse(presence._titles_match("", "Song"))
+        self.assertFalse(presence._titles_match("Song", ""))
+
+
+class ProviderDurationGuardTests(unittest.TestCase):
+    def setUp(self):
+        presence._artwork_cache.clear()
+
+    def test_apple_duration_not_taken_from_unmatched_result(self):
+        # The only result's title matches too loosely to trust its length;
+        # its artwork may still be adopted, its duration must not be.
+        response = json.dumps(
+            {
+                "results": [
+                    {
+                        "trackName": "Gimme Dat",
+                        "trackTimeMillis": 204000,
+                        "artworkUrl100": "https://is1.mzstatic.com/a/100x100bb.jpg",
+                    }
+                ]
+            }
+        )
+        with mock.patch.object(presence, "_http_get", return_value=response):
+            art, dur = presence._find_apple_music_info("Gimme Dat Ting", "Davido")
+        self.assertEqual(dur, 0.0)
+        self.assertEqual(art, "https://is1.mzstatic.com/a/500x500bb.jpg")
+
+    def test_apple_duration_taken_only_from_matched_result(self):
+        response = json.dumps(
+            {
+                "results": [
+                    {
+                        "trackName": "Unrelated",
+                        "trackTimeMillis": 999000,
+                        "artworkUrl100": "https://is1.mzstatic.com/a/100x100bb.jpg",
+                    },
+                    {
+                        "trackName": "Real Song",
+                        "trackTimeMillis": 180000,
+                        "artworkUrl100": "https://is1.mzstatic.com/b/100x100bb.jpg",
+                    },
+                ]
+            }
+        )
+        with mock.patch.object(presence, "_http_get", return_value=response):
+            art, dur = presence._find_apple_music_info("Real Song", "Artist")
+        self.assertEqual(dur, 180.0)
+        self.assertEqual(art, "https://is1.mzstatic.com/b/500x500bb.jpg")
+
+    def test_soundcloud_duration_not_taken_from_unmatched_result(self):
+        response = json.dumps(
+            {
+                "collection": [
+                    {
+                        "title": "Gimme Dat",
+                        "duration": 204000,
+                        "artwork_url": "https://i1.sndcdn.com/x-large.jpg",
+                    }
+                ]
+            }
+        )
+        with (
+            mock.patch.object(presence, "_soundcloud_client_id", return_value="cid"),
+            mock.patch.object(presence, "_http_get", return_value=response),
+        ):
+            art, dur = presence._find_soundcloud_info("Gimme Dat Ting", "Davido")
+        self.assertEqual(dur, 0.0)
+        self.assertEqual(art, "https://i1.sndcdn.com/x-t500x500.jpg")
+
+
+class AppleTimingHelperTests(unittest.TestCase):
+    def test_anchor_start_is_stable_across_polls(self):
+        anchors = {}
+        key = ("Song", "Artist")
+        first = presence.apple_anchor_start(key, 1000.0, anchors)
+        # A later poll with a later wall clock keeps the original anchor, so
+        # the elapsed bar grows 1:1 instead of following Apple's counter.
+        again = presence.apple_anchor_start(key, 1200.0, anchors)
+        self.assertEqual(first, 1000)
+        self.assertEqual(again, 1000)
+
+    def test_new_track_reanchors(self):
+        anchors = {}
+        presence.apple_anchor_start(("A", "x"), 1000.0, anchors)
+        self.assertEqual(presence.apple_anchor_start(("B", "x"), 1200.0, anchors), 1200)
+
+    def test_anchor_dict_is_capped(self):
+        anchors = {}
+        for i in range(150):
+            presence.apple_anchor_start((f"t{i}", ""), 1000.0 + i, anchors)
+        self.assertLessEqual(len(anchors), 100)
+
+    def test_locked_duration_prefers_itunes_and_holds(self):
+        locks = {}
+        key = ("Song", "Artist")
+        # First poll: GSMTC duration still 0, iTunes has the real length.
+        self.assertEqual(presence.apple_locked_duration(key, 0.0, 200.0, locks), 200.0)
+        # Later poll: GSMTC flips to a bogus value; the locked length holds.
+        self.assertEqual(presence.apple_locked_duration(key, 373.0, 373.0, locks), 200.0)
+
+    def test_locked_duration_falls_back_to_gsmtc_when_itunes_absent(self):
+        locks = {}
+        key = ("Song", "Artist")
+        # No iTunes match and no GSMTC duration yet: nothing to lock.
+        self.assertEqual(presence.apple_locked_duration(key, 0.0, 0.0, locks), 0.0)
+        self.assertNotIn(key, locks)
+        # GSMTC populates: lock the first non-zero value against later flips.
+        self.assertEqual(presence.apple_locked_duration(key, 250.0, 0.0, locks), 250.0)
+        self.assertEqual(presence.apple_locked_duration(key, 999.0, 0.0, locks), 250.0)
+
+
 if __name__ == "__main__":
     unittest.main()

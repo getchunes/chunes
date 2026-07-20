@@ -263,6 +263,23 @@ def normalize_title(t):
     )
 
 
+def _titles_match(query, candidate):
+    """True when two track titles refer to the same song.
+
+    Equal after normalization, or the shorter is contained in the longer and
+    covers most of it. The coverage floor stops a short unrelated title from
+    substring-matching a longer one (e.g. "Gimme Dat" inside "Gimme Dat Ting"),
+    which would otherwise pull in the wrong track's duration."""
+    a = normalize_title(query)
+    b = normalize_title(candidate)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    shorter, longer = sorted((a, b), key=len)
+    return shorter in longer and len(shorter) >= 0.8 * len(longer)
+
+
 def classify_tab(title, report):
     """Match a playing title to its reported audible browser tab."""
     if not report or not report["enabled"]:
@@ -352,25 +369,26 @@ def _find_soundcloud_info(title, artist):
                 "https://api-v2.soundcloud.com/search/tracks"
                 f"?q={q}&client_id={cid}&limit=5"
             ))
-            tl = title.lower()
-            best_art = None
-            best_dur = 0.0
+            matched_art = None
+            matched_dur = 0.0
+            fallback_art = None
             for t in data.get("collection", []):
                 cand = (t.get("artwork_url")
                         or t.get("user", {}).get("avatar_url"))
                 cand_dur = (t.get("duration") or 0) / 1000.0
-                ct = (t.get("title") or "").lower()
-                if ct and (ct in tl or tl in ct):
+                if _titles_match(title, t.get("title") or ""):
                     if cand:
-                        best_art = cand
-                    best_dur = cand_dur
+                        matched_art = cand
+                    matched_dur = cand_dur
                     break
-                if best_art is None and cand:
-                    best_art = cand
-                    best_dur = cand_dur
+                if fallback_art is None and cand:
+                    fallback_art = cand
+            best_art = matched_art or fallback_art
             if best_art:
                 art = best_art.replace("-large.", "-t500x500.")
-            dur = best_dur
+            # Duration only from a title-matched result; a fallback thumbnail is
+            # low harm, a wrong duration paints a wrong progress bar.
+            dur = matched_dur
     except Exception as e:
         print(f"SoundCloud artwork lookup failed: {type(e).__name__}: {e}")
     return art, dur
@@ -502,24 +520,25 @@ def _find_apple_music_info(title, artist):
             "https://itunes.apple.com/search"
             f"?term={q}&media=music&entity=song&limit=5"
         ))
-        tl = title.lower()
-        best_art = None
-        best_dur = 0.0
+        matched_art = None
+        matched_dur = 0.0
+        fallback_art = None
         for t in data.get("results", []):
             cand_art = t.get("artworkUrl100")
             cand_dur = (t.get("trackTimeMillis") or 0) / 1000.0
-            ct = (t.get("trackName") or "").lower()
-            if ct and (ct in tl or tl in ct):
+            if _titles_match(title, t.get("trackName") or ""):
                 if isinstance(cand_art, str) and cand_art:
-                    best_art = cand_art
-                best_dur = cand_dur
+                    matched_art = cand_art
+                matched_dur = cand_dur
                 break
-            if best_art is None and isinstance(cand_art, str) and cand_art:
-                best_art = cand_art
-                best_dur = cand_dur
+            if fallback_art is None and isinstance(cand_art, str) and cand_art:
+                fallback_art = cand_art
+        best_art = matched_art or fallback_art
         if best_art:
             art = best_art.replace("100x100", "500x500")
-        dur = best_dur
+        # Duration only from a title-matched result; a fallback thumbnail is low
+        # harm, a wrong duration paints a wrong progress bar.
+        dur = matched_dur
     except Exception as e:
         print(f"Apple Music artwork lookup failed: {type(e).__name__}: {e}")
     return art, dur
@@ -620,6 +639,40 @@ async def get_playing_track(allowed_sources):
     return None
 
 
+def apple_anchor_start(track_key, now, anchors):
+    """Wall-clock start epoch for an Apple Music track.
+
+    Apple's web player drives the Windows media session with a queue-wide
+    position counter that does not reset on a track change, so its reported
+    position is not a trustworthy offset into the current song. Anchor the
+    Discord start timestamp to when the track was first seen and reuse it for
+    the track's lifetime, letting elapsed grow with real time from ~0. A new
+    title/artist is a new key, so it re-anchors on the next song."""
+    start = anchors.get(track_key)
+    if start is None:
+        start = anchors[track_key] = int(now)
+        if len(anchors) > 100:
+            anchors.pop(next(iter(anchors)))
+    return start
+
+
+def apple_locked_duration(track_key, gsmtc_dur, info_dur, locks):
+    """First trusted duration for an Apple Music track, held against changes.
+
+    Apple's self-reported media-session duration reads 0 for the first several
+    seconds and can flip mid-song, so prefer the iTunes Search value and use the
+    media session only when the lookup has none. Once a positive value is
+    recorded it is locked so the progress bar does not jump."""
+    dur = locks.get(track_key, 0.0)
+    if dur <= 0:
+        dur = info_dur if info_dur > 0 else gsmtc_dur
+        if dur > 0:
+            locks[track_key] = dur
+            if len(locks) > 100:
+                locks.pop(next(iter(locks)))
+    return dur
+
+
 async def main():
     cfg = load_config()
     client_id = cfg["client_id"]
@@ -639,6 +692,8 @@ async def main():
 
     last = None
     seen = {}  # (title, artist) -> (start_epoch, duration) from real readings
+    apple_starts = {}  # (title, artist) -> anchored start epoch (Apple Music)
+    apple_durs = {}  # (title, artist) -> locked duration (Apple Music)
 
     async def send(coro_factory):
         # Discord's RPC responses occasionally trip up pypresence (missing
@@ -722,9 +777,17 @@ async def main():
         if track:
             now = time.time()
             use_artwork = settings.artwork_enabled()
+            is_apple = protocol.service_for_host(host) == "appleMusic"
             # Fallback tracks have no position; pin start to 0 so the
             # unchanged check stays stable and no timestamps are sent.
-            start = int(now - pos) if not source.startswith("tab:") else 0
+            if source.startswith("tab:"):
+                start = 0
+            elif is_apple:
+                # Apple's queue-wide position counter is not a reliable offset
+                # into the current song; anchor to first-seen wall clock.
+                start = apple_anchor_start((title, artist), now, apple_starts)
+            else:
+                start = int(now - pos)
             if start > 0:
                 seen[(title, artist)] = (start, dur)
                 if len(seen) > 100:
@@ -756,7 +819,14 @@ async def main():
                 )
                 if not use_artwork:
                     art = None
-                if dur <= 0 and info_dur > 0:
+                if is_apple:
+                    # GSMTC's Apple duration is late and flips mid-song; lock the
+                    # first trusted value (iTunes-preferred) without moving the
+                    # anchored start.
+                    dur = apple_locked_duration(
+                        (title, artist), dur, info_dur, apple_durs
+                    )
+                elif dur <= 0 and info_dur > 0:
                     dur = info_dur
                     start = int(now - pos) if 0 < pos < dur else int(now)
                 kwargs = dict(
