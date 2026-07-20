@@ -670,22 +670,50 @@ class AppleTimingHelperTests(unittest.TestCase):
     def test_anchor_start_is_stable_across_polls(self):
         anchors = {}
         key = ("Song", "Artist")
-        first = presence.apple_anchor_start(key, 1000.0, anchors)
+        first = presence.apple_track_start(key, 1000.0, anchors, None)
         # A later poll with a later wall clock keeps the original anchor, so
         # the elapsed bar grows 1:1 instead of following Apple's counter.
-        again = presence.apple_anchor_start(key, 1200.0, anchors)
+        again = presence.apple_track_start(key, 1200.0, anchors, None)
         self.assertEqual(first, 1000)
         self.assertEqual(again, 1000)
 
-    def test_new_track_reanchors(self):
+    def test_new_track_without_previous_anchors_at_now(self):
         anchors = {}
-        presence.apple_anchor_start(("A", "x"), 1000.0, anchors)
-        self.assertEqual(presence.apple_anchor_start(("B", "x"), 1200.0, anchors), 1200)
+        self.assertEqual(
+            presence.apple_track_start(("B", "x"), 1200.0, anchors, None), 1200
+        )
+
+    def test_gapless_change_back_dates_to_previous_track_end(self):
+        anchors = {}
+        # Previous track started at 1000 and is 180s long, due to end at 1180;
+        # the new track is noticed 4s later at 1184 (natural detection lag).
+        start = presence.apple_track_start(("B", "x"), 1184.0, anchors, (1000, 180.0))
+        self.assertEqual(start, 1180)
+
+    def test_skip_prediction_in_the_future_falls_back_to_now(self):
+        anchors = {}
+        # The previous track would end at 1180, but the user skipped ahead, so
+        # now (1100) precedes the predicted end: anchor fresh instead.
+        start = presence.apple_track_start(("B", "x"), 1100.0, anchors, (1000, 180.0))
+        self.assertEqual(start, 1100)
+
+    def test_large_gap_prediction_falls_back_to_now(self):
+        anchors = {}
+        # The previous track ended at 1180 but the next starts 60s later (a
+        # pause), well outside the gapless margin: anchor fresh.
+        start = presence.apple_track_start(("B", "x"), 1240.0, anchors, (1000, 180.0))
+        self.assertEqual(start, 1240)
+
+    def test_prediction_requires_a_known_previous_duration(self):
+        anchors = {}
+        # The previous track's duration was never locked, so its end is unknown.
+        start = presence.apple_track_start(("B", "x"), 1184.0, anchors, (1000, 0.0))
+        self.assertEqual(start, 1184)
 
     def test_anchor_dict_is_capped(self):
         anchors = {}
         for i in range(150):
-            presence.apple_anchor_start((f"t{i}", ""), 1000.0 + i, anchors)
+            presence.apple_track_start((f"t{i}", ""), 1000.0 + i, anchors, None)
         self.assertLessEqual(len(anchors), 100)
 
     def test_locked_duration_prefers_itunes_and_holds(self):

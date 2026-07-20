@@ -639,18 +639,38 @@ async def get_playing_track(allowed_sources):
     return None
 
 
-def apple_anchor_start(track_key, now, anchors):
-    """Wall-clock start epoch for an Apple Music track.
+# A newly seen Apple Music track is treated as a gapless continuation of the
+# previous one (back-dating its start to when that track was due to end) only
+# when the prediction lands within this many seconds of now. A larger gap means
+# a skip, a pause between tracks, or the first song of a session, which fall
+# back to a fresh anchor.
+APPLE_GAPLESS_MARGIN_SECONDS = 12
+
+
+def apple_track_start(track_key, now, anchors, prev):
+    """Discord start epoch for an Apple Music track.
 
     Apple's web player drives the Windows media session with a queue-wide
     position counter that does not reset on a track change, so its reported
-    position is not a trustworthy offset into the current song. Anchor the
-    Discord start timestamp to when the track was first seen and reuse it for
-    the track's lifetime, letting elapsed grow with real time from ~0. A new
-    title/artist is a new key, so it re-anchors on the next song."""
+    position is not a trustworthy offset into the current song and can't be
+    back-dated the way SoundCloud/YTM positions are.
+
+    A track already being tracked keeps its anchor. A newly seen track is
+    back-dated to when the previous Apple track was due to end: Apple plays
+    gapless and each track's length is known (the locked iTunes duration), so
+    this recovers the real offset the counter can't give us and keeps the bar
+    close to live. With no previous track, or a prediction outside a small
+    window around now (a manual skip, a gap, or the first song), it falls back
+    to a fresh anchor at now."""
     start = anchors.get(track_key)
     if start is None:
-        start = anchors[track_key] = int(now)
+        start = int(now)
+        if prev is not None:
+            prev_start, prev_dur = prev
+            predicted = prev_start + prev_dur
+            if prev_dur > 0 and 0 <= now - predicted <= APPLE_GAPLESS_MARGIN_SECONDS:
+                start = int(predicted)
+        anchors[track_key] = start
         if len(anchors) > 100:
             anchors.pop(next(iter(anchors)))
     return start
@@ -694,6 +714,7 @@ async def main():
     seen = {}  # (title, artist) -> (start_epoch, duration) from real readings
     apple_starts = {}  # (title, artist) -> anchored start epoch (Apple Music)
     apple_durs = {}  # (title, artist) -> locked duration (Apple Music)
+    last_apple_key = None  # previous Apple track, for gapless start prediction
 
     async def send(coro_factory):
         # Discord's RPC responses occasionally trip up pypresence (missing
@@ -784,10 +805,17 @@ async def main():
                 start = 0
             elif is_apple:
                 # Apple's queue-wide position counter is not a reliable offset
-                # into the current song; anchor to first-seen wall clock.
-                start = apple_anchor_start((title, artist), now, apple_starts)
+                # into the current song; anchor to first-seen wall clock, back-
+                # dated to the previous track's end on a gapless change.
+                prev = None
+                if last_apple_key is not None and last_apple_key != (title, artist):
+                    prev_start = apple_starts.get(last_apple_key)
+                    if prev_start is not None:
+                        prev = (prev_start, apple_durs.get(last_apple_key, 0.0))
+                start = apple_track_start((title, artist), now, apple_starts, prev)
             else:
                 start = int(now - pos)
+            last_apple_key = (title, artist) if is_apple else None
             if start > 0:
                 seen[(title, artist)] = (start, dur)
                 if len(seen) > 100:
@@ -846,6 +874,8 @@ async def main():
                 if await send(lambda r: r.update(**kwargs)):
                     last = (key, start, now)
         else:
+            # No track playing means no gapless continuation to anchor from.
+            last_apple_key = None
             if last is not None:
                 print("Playback stopped, clearing status.")
                 last = None
