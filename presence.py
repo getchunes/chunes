@@ -575,6 +575,9 @@ def load_config():
     return cfg
 
 
+_first_seen_at = {}  # (title, artist) -> epoch of the first poll that saw it
+
+
 async def get_playing_track(allowed_sources):
     """Return (title, artist, position_s, duration_s, source) or None."""
     mgr = await SessionManager.request_async()
@@ -595,17 +598,29 @@ async def get_playing_track(allowed_sources):
         # browsers refresh it infrequently, so extrapolate forward.
         pos = tl.position.total_seconds()
         dur = tl.end_time.total_seconds()
+
+        track_key = (props.title, props.artist or "")
+        now = time.time()
+        first_seen = _first_seen_at.get(track_key)
+        if first_seen is None:
+            first_seen = _first_seen_at[track_key] = now
+            if len(_first_seen_at) > 100:
+                _first_seen_at.pop(next(iter(_first_seen_at)))
+
+        # A throttled background tab (e.g. Apple Music) can update title and
+        # timeline on different ticks, so the triple isn't always a coherent
+        # snapshot of the current track. Only trust/extrapolate position when
+        # the anchor postdates when we first saw this title (skewed by a
+        # couple seconds for clock/poll slop) and duration is sane; otherwise
+        # the snapshot likely belongs to the previous track.
         try:
-            elapsed = time.time() - tl.last_updated_time.timestamp()
-            # Only extrapolate forward if last_updated_time is recent (< 15s)
-            # or if position is already past the initial track start window (> 15s).
-            # Inactive background tabs (e.g. Apple Music) update media properties
-            # and reset position to 0 on track change, but leave last_updated_time
-            # pointing to when the previous track started.
-            if 0 < elapsed < 15:
+            anchor = tl.last_updated_time.timestamp()
+            elapsed = now - anchor
+            coherent = dur > 0 and 0 <= pos <= dur and anchor > first_seen - 2
+            if coherent and 0 < elapsed < POLL_SECONDS + 5:
                 pos += elapsed
-            elif 0 < elapsed < 3600 and pos > 15:
-                pos += elapsed
+            elif not coherent:
+                pos = 0.0
         except (OSError, OverflowError, ValueError):
             pass
         if dur > 0 and pos >= dur:
@@ -724,7 +739,12 @@ async def main():
             use_artwork = settings.artwork_enabled()
             # Fallback tracks have no position; pin start to 0 so the
             # unchanged check stays stable and no timestamps are sent.
-            start = int(now - pos) if not source.startswith("tab:") else 0
+            # A pos outside (0, dur) is not a trustworthy mid-track position;
+            # anchor to now instead of drifting start into the past.
+            if source.startswith("tab:"):
+                start = 0
+            else:
+                start = int(now - pos) if 0 < pos < dur else int(now)
             if start > 0:
                 seen[(title, artist)] = (start, dur)
                 if len(seen) > 100:

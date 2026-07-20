@@ -1,6 +1,7 @@
 import asyncio
 import json
 import struct
+import time
 import unittest
 from unittest import mock
 
@@ -380,6 +381,7 @@ class ArtworkTests(unittest.TestCase):
     def setUp(self):
         presence._artwork_cache.clear()
         presence._ytm_client = None
+        presence._first_seen_at.clear()
 
     @staticmethod
     def youtube_music_response(video_id, thumbnails):
@@ -555,6 +557,91 @@ class ArtworkTests(unittest.TestCase):
             self.assertEqual(artist, "Nelly")
             self.assertEqual(pos, 0.0)  # Should NOT be 300+ seconds!
             self.assertEqual(dur, 228.0)
+
+    @staticmethod
+    def _fake_playing_mgr(title, artist, position, end_time, last_updated_time):
+        from datetime import timedelta
+        fake_session = mock.Mock()
+        fake_session.source_app_user_model_id = "msedge.exe"
+        playback_info = mock.Mock()
+        playback_info.playback_status = presence.PlaybackStatus.PLAYING
+        fake_session.get_playback_info.return_value = playback_info
+
+        props = mock.Mock()
+        props.title = title
+        props.artist = artist
+        fake_session.try_get_media_properties_async = mock.AsyncMock(return_value=props)
+
+        timeline = mock.Mock()
+        timeline.position = timedelta(seconds=position)
+        timeline.end_time = timedelta(seconds=end_time)
+        timeline.last_updated_time = last_updated_time
+        fake_session.get_timeline_properties.return_value = timeline
+
+        fake_mgr = mock.Mock()
+        fake_mgr.get_sessions.return_value = [fake_session]
+        return fake_mgr
+
+    def test_get_playing_track_rejects_anchor_predating_track_change(self):
+        # A background track change on Apple Music: the new title just
+        # arrived, but the timeline triple (position=150, end_time=180)
+        # still belongs to the previous track and is well stale (250s).
+        # Since the anchor predates when we first saw this title, it must
+        # not be trusted or extrapolated from.
+        from datetime import datetime, timezone, timedelta
+        fake_mgr = self._fake_playing_mgr(
+            "New Song", "New Artist", 150, 180,
+            datetime.now(timezone.utc) - timedelta(seconds=250),
+        )
+        with mock.patch.object(
+            presence.SessionManager, "request_async", mock.AsyncMock(return_value=fake_mgr)
+        ):
+            title, artist, pos, dur, source = asyncio.run(
+                presence.get_playing_track(["msedge"])
+            )
+        self.assertEqual(pos, 0.0)
+        self.assertEqual(dur, 180.0)
+
+    def test_get_playing_track_rejects_unknown_duration(self):
+        # end_time == 0 means duration is unknown/not yet reported for the
+        # current track; position must not be trusted or extrapolated.
+        from datetime import datetime, timezone, timedelta
+        fake_mgr = self._fake_playing_mgr(
+            "New Song", "New Artist", 90, 0,
+            datetime.now(timezone.utc) - timedelta(seconds=2),
+        )
+        with mock.patch.object(
+            presence.SessionManager, "request_async", mock.AsyncMock(return_value=fake_mgr)
+        ):
+            title, artist, pos, dur, source = asyncio.run(
+                presence.get_playing_track(["msedge"])
+            )
+        self.assertEqual(pos, 0.0)
+        self.assertEqual(dur, 0.0)
+        # main()'s primary start computation must not anchor into the past
+        # on an untrustworthy pos/dur pair.
+        now = 1000000.0
+        start = int(now - pos) if 0 < pos < dur else int(now)
+        self.assertEqual(start, int(now))
+
+    def test_get_playing_track_still_extrapolates_coherent_fresh_snapshot(self):
+        # Regression guard: an ongoing, coherent track (same title we've
+        # tracked for a while) with a snapshot only a few seconds stale
+        # should still extrapolate forward as before.
+        from datetime import datetime, timezone, timedelta
+        presence._first_seen_at[("Same Song", "Same Artist")] = time.time() - 60
+        fake_mgr = self._fake_playing_mgr(
+            "Same Song", "Same Artist", 40, 180,
+            datetime.now(timezone.utc) - timedelta(seconds=3),
+        )
+        with mock.patch.object(
+            presence.SessionManager, "request_async", mock.AsyncMock(return_value=fake_mgr)
+        ):
+            title, artist, pos, dur, source = asyncio.run(
+                presence.get_playing_track(["msedge"])
+            )
+        self.assertAlmostEqual(pos, 43.0, delta=1.0)
+        self.assertEqual(dur, 180.0)
 
     def test_apple_music_artwork_failure_yields_no_art(self):
         with (
