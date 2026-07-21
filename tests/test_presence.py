@@ -807,6 +807,33 @@ class ResolveTabTests(unittest.TestCase):
         )
 
 
+class FallbackTimingTests(unittest.TestCase):
+    FB = ("Cloud Song", "Cloud Artist", "soundcloud.com", None)
+    NOW = 2_000.0
+
+    def test_no_anchor_publishes_nothing(self):
+        # Never saw this track's real position, so the only thing we could
+        # show is a frozen 0:00. Publish nothing instead.
+        self.assertIsNone(presence.fallback_timing(self.FB, {}, self.NOW))
+
+    def test_recent_anchor_yields_moving_position(self):
+        # Real position captured 40s ago on a 180s track: still valid.
+        seen = {("Cloud Song", "Cloud Artist"): (self.NOW - 40, 180.0)}
+        result = presence.fallback_timing(self.FB, seen, self.NOW)
+        self.assertEqual(
+            result, ("Cloud Song", "Cloud Artist", 40.0, 180.0, "tab:soundcloud.com")
+        )
+
+    def test_anchor_past_track_end_plus_grace_is_dropped(self):
+        # Anchored 220s ago on a 180s track (> dur + 30 grace): stale.
+        seen = {("Cloud Song", "Cloud Artist"): (self.NOW - 220, 180.0)}
+        self.assertIsNone(presence.fallback_timing(self.FB, seen, self.NOW))
+
+    def test_anchor_for_a_different_track_is_ignored(self):
+        seen = {("Other Song", "Other Artist"): (self.NOW - 10, 180.0)}
+        self.assertIsNone(presence.fallback_timing(self.FB, seen, self.NOW))
+
+
 class AppleExtensionTimingTests(unittest.TestCase):
     NOW = 1_750_000_010.0
 

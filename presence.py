@@ -250,6 +250,29 @@ def fallback_track(report):
     return None
 
 
+def fallback_timing(fb, seen, now):
+    """Build a media-session fallback track, or None when it would stall.
+
+    `fb` is `(title, artist, host, media_id)` from `fallback_track()`. A
+    fallback is used when a non-music tab (e.g. a regular YouTube video) has
+    taken over the browser's single OS media session while a music tab is
+    still audible. It is published only when this track's real position was
+    captured (recorded in `seen`) before the takeover and is still within
+    range: playback advances 1:1 with real time, so that anchor keeps the
+    progress bar moving. Without it there is only a frozen 0:00, so return
+    None and publish nothing. Returns `(title, artist, pos, dur, source)`.
+    """
+    title, artist, host, _media_id = fb
+    anchor = seen.get((title, artist))
+    if not anchor:
+        return None
+    a_start, a_dur = anchor
+    elapsed = now - a_start
+    if 0 < elapsed < a_dur + 30:
+        return (title, artist, elapsed, a_dur, f"tab:{host}")
+    return None
+
+
 def normalize_title(t):
     if not t:
         return ""
@@ -828,27 +851,20 @@ async def main():
             fb = fallback_track(report)
             if fb:
                 title, artist, host, media_id = fb
-                pos, dur, source = 0.0, 0.0, f"tab:{host}"
-                # If we saw this track's real position before losing the
-                # media slot, its wall-clock anchor is still valid: playback
-                # advances 1:1 with real time.
-                anchor = seen.get((title, artist))
-                if anchor:
-                    a_start, a_dur = anchor
-                    elapsed = time.time() - a_start
-                    if 0 < elapsed < a_dur + 30:
-                        pos, dur = elapsed, a_dur
-                track = (title, artist, pos, dur, source)
+                track = fallback_timing(fb, seen, time.time())
+                if track:
+                    title, artist, pos, dur, source = track
 
         if track:
             now = time.time()
             use_artwork = settings.artwork_enabled()
             is_apple = protocol.service_for_host(host) == "appleMusic"
             ext_timing = None
-            # Fallback tracks have no position; pin start to 0 so the
-            # unchanged check stays stable and no timestamps are sent.
+            # A fallback track exists only when a real anchor was recovered,
+            # so it carries a genuine elapsed position; anchor its start to
+            # wall clock the same way a normal browser track is anchored.
             if source.startswith("tab:"):
-                start = 0
+                start = int(now - pos)
             elif is_apple:
                 ext_timing = apple_extension_timing(tab, now)
                 if ext_timing is not None:
