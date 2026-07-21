@@ -399,6 +399,29 @@ class ServicePolicyTests(unittest.TestCase):
         report["enabled"] = False
         self.assertIsNone(protocol.untitled_service_tab(report))
 
+    def test_has_unpublishable_audible_tab_flags_blocked_and_disabled(self):
+        clean = copy.deepcopy(VALID_REPORT)
+        clean["tabs"].append(copy.deepcopy(APPLE_TAB))
+        # Every audible tab is an enabled music service.
+        self.assertFalse(protocol.has_unpublishable_audible_tab(clean))
+
+        # A regular (blocked) YouTube video audible alongside the music tabs.
+        with_video = copy.deepcopy(clean)
+        with_video["tabs"].append(
+            {"host": "youtube.com", "mediaId": None, "title": "Some Clip - YouTube"}
+        )
+        self.assertTrue(protocol.has_unpublishable_audible_tab(with_video))
+
+        # A disabled service that is still audible is also unpublishable.
+        disabled = copy.deepcopy(clean)
+        disabled["services"]["soundcloud"] = False
+        self.assertTrue(protocol.has_unpublishable_audible_tab(disabled))
+
+        # The master switch off short-circuits; nothing is published anyway.
+        with_video["enabled"] = False
+        self.assertFalse(protocol.has_unpublishable_audible_tab(with_video))
+        self.assertFalse(protocol.has_unpublishable_audible_tab(None))
+
     def test_report_freshness_is_bounded(self):
         self.assertTrue(protocol.report_is_fresh(100, now=100))
         self.assertTrue(protocol.report_is_fresh(100, now=190))

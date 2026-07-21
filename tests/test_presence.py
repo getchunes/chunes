@@ -735,6 +735,78 @@ class AppleTimingHelperTests(unittest.TestCase):
         self.assertEqual(presence.apple_locked_duration(key, 999.0, 0.0, locks), 250.0)
 
 
+class ResolveTabTests(unittest.TestCase):
+    APPLE = {
+        "host": "music.apple.com",
+        "mediaId": None,
+        "title": "Album - Album by Artist - Apple Music",
+    }
+    YT_VIDEO = {
+        "host": "youtube.com",
+        "mediaId": None,
+        "title": "Cool Clip - YouTube",
+    }
+
+    def _report(self, tabs, **services):
+        base = {"appleMusic": True, "soundcloud": True, "youtubeMusic": True}
+        base.update(services)
+        return {"enabled": True, "services": base, "tabs": tabs}
+
+    def test_apple_attributed_when_only_apple_is_audible(self):
+        report = self._report([self.APPLE])
+        self.assertEqual(
+            presence.resolve_tab("Real Song", "Google.Chrome_1", report), self.APPLE
+        )
+
+    def test_youtube_video_is_never_published_as_apple(self):
+        report = self._report([self.APPLE, self.YT_VIDEO])
+        # The media session reports the video's title while Apple is the only
+        # enabled tab; it must not be attributed to Apple Music.
+        self.assertIsNone(
+            presence.resolve_tab("Cool Clip", "Google.Chrome_1", report)
+        )
+        # A title matching nothing must also stay unattributed while the
+        # blocked video is audible.
+        self.assertIsNone(
+            presence.resolve_tab("Mystery Title", "Google.Chrome_1", report)
+        )
+
+    def test_matched_music_tab_resolves_despite_a_co_audible_video(self):
+        soundcloud = {
+            "host": "soundcloud.com",
+            "mediaId": None,
+            "title": "Cloud Song by Cloud Artist",
+        }
+        report = self._report([soundcloud, self.YT_VIDEO])
+        self.assertEqual(
+            presence.resolve_tab("Cloud Song", "Google.Chrome_1", report),
+            soundcloud,
+        )
+
+    def test_generic_ytm_transient_still_attributes_without_other_audio(self):
+        ytm = {
+            "host": "music.youtube.com",
+            "mediaId": "a1B2c3D4e5F",
+            "title": "YouTube Music",
+        }
+        report = self._report([ytm])
+        self.assertEqual(
+            presence.resolve_tab("Some Real Track", "Google.Chrome_1", report),
+            ytm,
+        )
+
+    def test_disabled_service_audible_blocks_attribution(self):
+        soundcloud = {
+            "host": "soundcloud.com",
+            "mediaId": None,
+            "title": "Cloud Song by Cloud Artist",
+        }
+        report = self._report([self.APPLE, soundcloud], soundcloud=False)
+        self.assertIsNone(
+            presence.resolve_tab("Real Song", "Google.Chrome_1", report)
+        )
+
+
 class AppleExtensionTimingTests(unittest.TestCase):
     NOW = 1_750_000_010.0
 

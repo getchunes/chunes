@@ -291,6 +291,24 @@ def enabled_tabs(report):
     ]
 
 
+def has_unpublishable_audible_tab(report):
+    """True when the browser is audibly playing something that must not be
+    published: a non-music tab (e.g. a regular YouTube video) or a service the
+    user disabled.
+
+    Reports list only audible tabs, so any tab that is not an enabled music
+    service means non-allowlisted audio is playing right now. The OS media
+    session reports a single browser title without saying which tab produced
+    it, so when such a tab is present an unmatched title cannot be safely
+    attributed to a music service.
+    """
+    if not report or not report["enabled"]:
+        return False
+    return any(
+        not service_is_enabled(report, tab["host"]) for tab in report["tabs"]
+    )
+
+
 def untitled_service_tab(report):
     """Tab to attribute a playing title that matches no reported tab title.
 

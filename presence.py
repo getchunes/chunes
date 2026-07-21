@@ -300,6 +300,28 @@ def classify_host(title, report):
     return tab["host"] if tab else None
 
 
+def resolve_tab(title, source, report):
+    """Resolve the audible browser tab a media-session title belongs to.
+
+    A title that matches an enabled music tab is taken directly. An unmatched
+    browser title (the Apple Music web player keeps a generic page title, so
+    its real track never matches) is attributed to the sole audible music tab
+    only when nothing unpublishable is also audible. If a blocked video or a
+    disabled service is playing too, the media session's single title could be
+    that tab's, so it is left unattributed rather than risk publishing it.
+    Returns the resolved tab, or None when it can't be safely attributed.
+    """
+    tab = classify_tab(title, report)
+    if tab is not None or not protocol.is_browser_source(source):
+        return tab
+    if protocol.has_unpublishable_audible_tab(report):
+        return None
+    enabled = protocol.enabled_tabs(report)
+    if len(enabled) == 1:
+        return enabled[0]
+    return protocol.untitled_service_tab(report)
+
+
 _UA = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -786,13 +808,7 @@ async def main():
             if normalize_title(title) in ("youtube music", "soundcloud", "apple music", "youtube"):
                 track = None
             else:
-                tab = classify_tab(title, report)
-                if tab is None and protocol.is_browser_source(source):
-                    enabled = protocol.enabled_tabs(report)
-                    if len(enabled) == 1:
-                        tab = enabled[0]
-                    else:
-                        tab = protocol.untitled_service_tab(report)
+                tab = resolve_tab(title, source, report)
                 if tab:
                     host = tab["host"]
                     media_id = tab["mediaId"]
