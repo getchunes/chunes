@@ -43,6 +43,9 @@
     <Property Id="ARPPRODUCTICON" Value="ChunesIcon" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/getchunes/chunes" />
     <Property Id="ARPHELPLINK" Value="https://github.com/getchunes/chunes/issues" />
+    <Property
+      Id="WIXUI_EXITDIALOGOPTIONALTEXT"
+      Value="For accurate SoundCloud, YouTube Music, and Apple Music detection, install the Chune ID browser extension from the Chrome Web Store: https://chromewebstore.google.com/detail/chune-id/ofbfkbhgfhoapckgjcpmcohbhnogpfjd" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <Property
       Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
