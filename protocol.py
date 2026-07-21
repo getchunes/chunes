@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import json
+import math
 import re
 import time
 
@@ -12,10 +13,17 @@ MAX_TABS = 64
 MAX_HOST_CHARS = 253
 MAX_TITLE_CHARS = 512
 MAX_MEDIA_ID_CHARS = 11
+MAX_PLAYBACK_SECONDS = 24 * 60 * 60
+MAX_SAMPLED_AT_MS = 8.64e15  # largest epoch a JavaScript Date can represent
 REPORT_TTL_SECONDS = 90
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 REPORT_KEYS = {"enabled", "services", "tabs"}
+TAB_KEYS = {"host", "mediaId", "title"}
+# Page-level playback timing measured by the extension (MusicKit). Only the
+# Apple Music web player needs it: its OS media session misreports position
+# and duration, while SoundCloud/YTM are already correct without help.
+PLAYBACK_KEYS = {"position", "duration", "playing", "sampledAt"}
 SERVICE_KEYS = {"appleMusic", "soundcloud", "youtubeMusic"}
 SERVICE_LABELS = {
     "appleMusic": "Apple Music",
@@ -69,8 +77,47 @@ def _reject_json_constant(value):
     raise ProtocolError(400, f"Invalid JSON constant: {value}")
 
 
+def _validate_playback_number(value, maximum):
+    if type(value) is bool or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or not 0 <= number <= maximum:
+        return None
+    return number
+
+
+def _validate_tab_playback(tab, host):
+    """Validated playback fields for a tab, or an empty dict without them."""
+    present = set(tab) & PLAYBACK_KEYS
+    if not present:
+        return {}
+    if present != PLAYBACK_KEYS:
+        raise ProtocolError(400, "Incomplete tab playback")
+    if host != "music.apple.com":
+        raise ProtocolError(400, "Unexpected tab playback")
+
+    position = _validate_playback_number(tab["position"], MAX_PLAYBACK_SECONDS)
+    sampled_at = _validate_playback_number(tab["sampledAt"], MAX_SAMPLED_AT_MS)
+    if position is None or sampled_at is None:
+        raise ProtocolError(400, "Invalid tab playback")
+    duration = tab["duration"]
+    if duration is not None:
+        duration = _validate_playback_number(duration, MAX_PLAYBACK_SECONDS)
+        if duration is None:
+            raise ProtocolError(400, "Invalid tab playback")
+    if type(tab["playing"]) is not bool:
+        raise ProtocolError(400, "Invalid tab playback")
+
+    return {
+        "position": position,
+        "duration": duration,
+        "playing": tab["playing"],
+        "sampledAt": sampled_at,
+    }
+
+
 def validate_report(value):
-    """Return a detached report after validating the exact v2 schema."""
+    """Return a detached report after validating the exact v3 schema."""
     if not isinstance(value, dict) or set(value) != REPORT_KEYS:
         raise ProtocolError(400, "Invalid report object")
     if type(value["enabled"]) is not bool:
@@ -88,7 +135,7 @@ def validate_report(value):
 
     clean_tabs = []
     for tab in tabs:
-        if not isinstance(tab, dict) or set(tab) != {"host", "mediaId", "title"}:
+        if not isinstance(tab, dict) or not TAB_KEYS <= set(tab) <= TAB_KEYS | PLAYBACK_KEYS:
             raise ProtocolError(400, "Invalid tab object")
         host = tab["host"]
         media_id = tab["mediaId"]
@@ -109,7 +156,9 @@ def validate_report(value):
                 raise ProtocolError(400, "Invalid YouTube Music video ID")
         elif media_id is not None:
             raise ProtocolError(400, "Unexpected tab media ID")
-        clean_tabs.append({"host": host, "mediaId": media_id, "title": title})
+        clean_tab = {"host": host, "mediaId": media_id, "title": title}
+        clean_tab.update(_validate_tab_playback(tab, host))
+        clean_tabs.append(clean_tab)
 
     return {
         "enabled": value["enabled"],
@@ -240,6 +289,24 @@ def enabled_tabs(report):
         for tab in report["tabs"]
         if service_is_enabled(report, tab["host"])
     ]
+
+
+def has_unpublishable_audible_tab(report):
+    """True when the browser is audibly playing something that must not be
+    published: a non-music tab (e.g. a regular YouTube video) or a service the
+    user disabled.
+
+    Reports list only audible tabs, so any tab that is not an enabled music
+    service means non-allowlisted audio is playing right now. The OS media
+    session reports a single browser title without saying which tab produced
+    it, so when such a tab is present an unmatched title cannot be safely
+    attributed to a music service.
+    """
+    if not report or not report["enabled"]:
+        return False
+    return any(
+        not service_is_enabled(report, tab["host"]) for tab in report["tabs"]
+    )
 
 
 def untitled_service_tab(report):

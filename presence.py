@@ -250,6 +250,29 @@ def fallback_track(report):
     return None
 
 
+def fallback_timing(fb, seen, now):
+    """Build a media-session fallback track, or None when it would stall.
+
+    `fb` is `(title, artist, host, media_id)` from `fallback_track()`. A
+    fallback is used when a non-music tab (e.g. a regular YouTube video) has
+    taken over the browser's single OS media session while a music tab is
+    still audible. It is published only when this track's real position was
+    captured (recorded in `seen`) before the takeover and is still within
+    range: playback advances 1:1 with real time, so that anchor keeps the
+    progress bar moving. Without it there is only a frozen 0:00, so return
+    None and publish nothing. Returns `(title, artist, pos, dur, source)`.
+    """
+    title, artist, host, _media_id = fb
+    anchor = seen.get((title, artist))
+    if not anchor:
+        return None
+    a_start, a_dur = anchor
+    elapsed = now - a_start
+    if 0 < elapsed < a_dur + 30:
+        return (title, artist, elapsed, a_dur, f"tab:{host}")
+    return None
+
+
 def normalize_title(t):
     if not t:
         return ""
@@ -261,6 +284,23 @@ def normalize_title(t):
         .replace("”", '"')
         .strip()
     )
+
+
+def _titles_match(query, candidate):
+    """True when two track titles refer to the same song.
+
+    Equal after normalization, or the shorter is contained in the longer and
+    covers most of it. The coverage floor stops a short unrelated title from
+    substring-matching a longer one (e.g. "Gimme Dat" inside "Gimme Dat Ting"),
+    which would otherwise pull in the wrong track's duration."""
+    a = normalize_title(query)
+    b = normalize_title(candidate)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    shorter, longer = sorted((a, b), key=len)
+    return shorter in longer and len(shorter) >= 0.8 * len(longer)
 
 
 def classify_tab(title, report):
@@ -281,6 +321,28 @@ def classify_host(title, report):
     """Return the reported host for a playing title, if one matches."""
     tab = classify_tab(title, report)
     return tab["host"] if tab else None
+
+
+def resolve_tab(title, source, report):
+    """Resolve the audible browser tab a media-session title belongs to.
+
+    A title that matches an enabled music tab is taken directly. An unmatched
+    browser title (the Apple Music web player keeps a generic page title, so
+    its real track never matches) is attributed to the sole audible music tab
+    only when nothing unpublishable is also audible. If a blocked video or a
+    disabled service is playing too, the media session's single title could be
+    that tab's, so it is left unattributed rather than risk publishing it.
+    Returns the resolved tab, or None when it can't be safely attributed.
+    """
+    tab = classify_tab(title, report)
+    if tab is not None or not protocol.is_browser_source(source):
+        return tab
+    if protocol.has_unpublishable_audible_tab(report):
+        return None
+    enabled = protocol.enabled_tabs(report)
+    if len(enabled) == 1:
+        return enabled[0]
+    return protocol.untitled_service_tab(report)
 
 
 _UA = {
@@ -352,25 +414,26 @@ def _find_soundcloud_info(title, artist):
                 "https://api-v2.soundcloud.com/search/tracks"
                 f"?q={q}&client_id={cid}&limit=5"
             ))
-            tl = title.lower()
-            best_art = None
-            best_dur = 0.0
+            matched_art = None
+            matched_dur = 0.0
+            fallback_art = None
             for t in data.get("collection", []):
                 cand = (t.get("artwork_url")
                         or t.get("user", {}).get("avatar_url"))
                 cand_dur = (t.get("duration") or 0) / 1000.0
-                ct = (t.get("title") or "").lower()
-                if ct and (ct in tl or tl in ct):
+                if _titles_match(title, t.get("title") or ""):
                     if cand:
-                        best_art = cand
-                    best_dur = cand_dur
+                        matched_art = cand
+                    matched_dur = cand_dur
                     break
-                if best_art is None and cand:
-                    best_art = cand
-                    best_dur = cand_dur
+                if fallback_art is None and cand:
+                    fallback_art = cand
+            best_art = matched_art or fallback_art
             if best_art:
                 art = best_art.replace("-large.", "-t500x500.")
-            dur = best_dur
+            # Duration only from a title-matched result; a fallback thumbnail is
+            # low harm, a wrong duration paints a wrong progress bar.
+            dur = matched_dur
     except Exception as e:
         print(f"SoundCloud artwork lookup failed: {type(e).__name__}: {e}")
     return art, dur
@@ -502,24 +565,25 @@ def _find_apple_music_info(title, artist):
             "https://itunes.apple.com/search"
             f"?term={q}&media=music&entity=song&limit=5"
         ))
-        tl = title.lower()
-        best_art = None
-        best_dur = 0.0
+        matched_art = None
+        matched_dur = 0.0
+        fallback_art = None
         for t in data.get("results", []):
             cand_art = t.get("artworkUrl100")
             cand_dur = (t.get("trackTimeMillis") or 0) / 1000.0
-            ct = (t.get("trackName") or "").lower()
-            if ct and (ct in tl or tl in ct):
+            if _titles_match(title, t.get("trackName") or ""):
                 if isinstance(cand_art, str) and cand_art:
-                    best_art = cand_art
-                best_dur = cand_dur
+                    matched_art = cand_art
+                matched_dur = cand_dur
                 break
-            if best_art is None and isinstance(cand_art, str) and cand_art:
-                best_art = cand_art
-                best_dur = cand_dur
+            if fallback_art is None and isinstance(cand_art, str) and cand_art:
+                fallback_art = cand_art
+        best_art = matched_art or fallback_art
         if best_art:
             art = best_art.replace("100x100", "500x500")
-        dur = best_dur
+        # Duration only from a title-matched result; a fallback thumbnail is low
+        # harm, a wrong duration paints a wrong progress bar.
+        dur = matched_dur
     except Exception as e:
         print(f"Apple Music artwork lookup failed: {type(e).__name__}: {e}")
     return art, dur
@@ -620,6 +684,89 @@ async def get_playing_track(allowed_sources):
     return None
 
 
+# A newly seen Apple Music track is treated as a gapless continuation of the
+# previous one (back-dating its start to when that track was due to end) only
+# when the prediction lands within this many seconds of now. A larger gap means
+# a skip, a pause between tracks, or the first song of a session, which fall
+# back to a fresh anchor.
+APPLE_GAPLESS_MARGIN_SECONDS = 12
+
+
+def apple_track_start(track_key, now, anchors, prev):
+    """Discord start epoch for an Apple Music track.
+
+    Apple's web player drives the Windows media session with a queue-wide
+    position counter that does not reset on a track change, so its reported
+    position is not a trustworthy offset into the current song and can't be
+    back-dated the way SoundCloud/YTM positions are.
+
+    A track already being tracked keeps its anchor. A newly seen track is
+    back-dated to when the previous Apple track was due to end: Apple plays
+    gapless and each track's length is known (the locked iTunes duration), so
+    this recovers the real offset the counter can't give us and keeps the bar
+    close to live. With no previous track, or a prediction outside a small
+    window around now (a manual skip, a gap, or the first song), it falls back
+    to a fresh anchor at now."""
+    start = anchors.get(track_key)
+    if start is None:
+        start = int(now)
+        if prev is not None:
+            prev_start, prev_dur = prev
+            predicted = prev_start + prev_dur
+            if prev_dur > 0 and 0 <= now - predicted <= APPLE_GAPLESS_MARGIN_SECONDS:
+                start = int(predicted)
+        anchors[track_key] = start
+        if len(anchors) > 100:
+            anchors.pop(next(iter(anchors)))
+    return start
+
+
+def apple_locked_duration(track_key, gsmtc_dur, info_dur, locks):
+    """First trusted duration for an Apple Music track, held against changes.
+
+    Apple's self-reported media-session duration reads 0 for the first several
+    seconds and can flip mid-song, so prefer the iTunes Search value and use the
+    media session only when the lookup has none. Once a positive value is
+    recorded it is locked so the progress bar does not jump."""
+    dur = locks.get(track_key, 0.0)
+    if dur <= 0:
+        dur = info_dur if info_dur > 0 else gsmtc_dur
+        if dur > 0:
+            locks[track_key] = dur
+            if len(locks) > 100:
+                locks.pop(next(iter(locks)))
+    return dur
+
+
+# A MusicKit sample older than this is treated as gone (tab closed, extension
+# reloaded, or the page wedged) and the GSMTC anchor workaround takes over.
+# The extension only pushes a report when playback changes meaningfully, so a
+# steadily playing sample is normally up to a full report period (~30s) old
+# and extrapolates accurately; a couple of missed periods means trouble.
+# Small negative ages are tolerated: the sample is taken on the browser's
+# clock a report cycle before we compare it against ours.
+APPLE_EXTENSION_TIMING_MAX_AGE_SECONDS = 75
+
+
+def apple_extension_timing(tab, now):
+    """(position, duration) measured in-page by the extension, or None.
+
+    The extension reads the Apple Music web player's own MusicKit state, the
+    only source that reports real per-track position and duration (the OS
+    media session runs a queue-wide counter and misreports duration). A
+    playing sample is extrapolated to now; a paused one is used as-is. A
+    missing or stale sample returns None so the caller can fall back to the
+    GSMTC anchor workaround."""
+    if not tab or "position" not in tab:
+        return None
+    age = now - tab["sampledAt"] / 1000.0
+    if not -5 <= age <= APPLE_EXTENSION_TIMING_MAX_AGE_SECONDS:
+        return None
+    position = tab["position"] + (max(age, 0.0) if tab["playing"] else 0.0)
+    duration = tab["duration"] or 0.0
+    return position, duration
+
+
 async def main():
     cfg = load_config()
     client_id = cfg["client_id"]
@@ -639,6 +786,9 @@ async def main():
 
     last = None
     seen = {}  # (title, artist) -> (start_epoch, duration) from real readings
+    apple_starts = {}  # (title, artist) -> anchored start epoch (Apple Music)
+    apple_durs = {}  # (title, artist) -> locked duration (Apple Music)
+    last_apple_key = None  # previous Apple track, for gapless start prediction
 
     async def send(coro_factory):
         # Discord's RPC responses occasionally trip up pypresence (missing
@@ -681,13 +831,7 @@ async def main():
             if normalize_title(title) in ("youtube music", "soundcloud", "apple music", "youtube"):
                 track = None
             else:
-                tab = classify_tab(title, report)
-                if tab is None and protocol.is_browser_source(source):
-                    enabled = protocol.enabled_tabs(report)
-                    if len(enabled) == 1:
-                        tab = enabled[0]
-                    else:
-                        tab = protocol.untitled_service_tab(report)
+                tab = resolve_tab(title, source, report)
                 if tab:
                     host = tab["host"]
                     media_id = tab["mediaId"]
@@ -707,24 +851,49 @@ async def main():
             fb = fallback_track(report)
             if fb:
                 title, artist, host, media_id = fb
-                pos, dur, source = 0.0, 0.0, f"tab:{host}"
-                # If we saw this track's real position before losing the
-                # media slot, its wall-clock anchor is still valid: playback
-                # advances 1:1 with real time.
-                anchor = seen.get((title, artist))
-                if anchor:
-                    a_start, a_dur = anchor
-                    elapsed = time.time() - a_start
-                    if 0 < elapsed < a_dur + 30:
-                        pos, dur = elapsed, a_dur
-                track = (title, artist, pos, dur, source)
+                track = fallback_timing(fb, seen, time.time())
+                if track:
+                    title, artist, pos, dur, source = track
 
         if track:
             now = time.time()
             use_artwork = settings.artwork_enabled()
-            # Fallback tracks have no position; pin start to 0 so the
-            # unchanged check stays stable and no timestamps are sent.
-            start = int(now - pos) if not source.startswith("tab:") else 0
+            is_apple = protocol.service_for_host(host) == "appleMusic"
+            ext_timing = None
+            # A fallback track exists only when a real anchor was recovered,
+            # so it carries a genuine elapsed position; anchor its start to
+            # wall clock the same way a normal browser track is anchored.
+            if source.startswith("tab:"):
+                start = int(now - pos)
+            elif is_apple:
+                ext_timing = apple_extension_timing(tab, now)
+                if ext_timing is not None:
+                    # The extension read the real position from the page's
+                    # MusicKit player; anchor directly to it. Keeping the
+                    # anchor and lock dicts current means a lost sample later
+                    # hands the GSMTC workaround an accurate starting point.
+                    start = int(now - ext_timing[0])
+                    apple_starts[(title, artist)] = start
+                    if len(apple_starts) > 100:
+                        apple_starts.pop(next(iter(apple_starts)))
+                    if ext_timing[1] > 0:
+                        apple_durs[(title, artist)] = ext_timing[1]
+                        if len(apple_durs) > 100:
+                            apple_durs.pop(next(iter(apple_durs)))
+                else:
+                    # Apple's queue-wide position counter is not a reliable
+                    # offset into the current song; anchor to first-seen wall
+                    # clock, back-dated to the previous track's end on a
+                    # gapless change.
+                    prev = None
+                    if last_apple_key is not None and last_apple_key != (title, artist):
+                        prev_start = apple_starts.get(last_apple_key)
+                        if prev_start is not None:
+                            prev = (prev_start, apple_durs.get(last_apple_key, 0.0))
+                    start = apple_track_start((title, artist), now, apple_starts, prev)
+            else:
+                start = int(now - pos)
+            last_apple_key = (title, artist) if is_apple else None
             if start > 0:
                 seen[(title, artist)] = (start, dur)
                 if len(seen) > 100:
@@ -756,7 +925,18 @@ async def main():
                 )
                 if not use_artwork:
                     art = None
-                if dur <= 0 and info_dur > 0:
+                if is_apple:
+                    if ext_timing is not None and ext_timing[1] > 0:
+                        # MusicKit reports the track's real duration directly.
+                        dur = ext_timing[1]
+                    else:
+                        # GSMTC's Apple duration is late and flips mid-song;
+                        # lock the first trusted value (iTunes-preferred)
+                        # without moving the anchored start.
+                        dur = apple_locked_duration(
+                            (title, artist), dur, info_dur, apple_durs
+                        )
+                elif dur <= 0 and info_dur > 0:
                     dur = info_dur
                     start = int(now - pos) if 0 < pos < dur else int(now)
                 kwargs = dict(
@@ -776,6 +956,8 @@ async def main():
                 if await send(lambda r: r.update(**kwargs)):
                     last = (key, start, now)
         else:
+            # No track playing means no gapless continuation to anchor from.
+            last_apple_key = None
             if last is not None:
                 print("Playback stopped, clearing status.")
                 last = None

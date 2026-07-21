@@ -136,13 +136,96 @@ class ReportValidationTests(unittest.TestCase):
         body = json.dumps(VALID_REPORT, ensure_ascii=False).encode("utf-8")
         self.assertEqual(protocol.parse_report_body(body), VALID_REPORT)
 
-    def test_accepts_apple_music_tabs_in_v2_reports(self):
+    def test_accepts_apple_music_tabs_without_playback(self):
         value = copy.deepcopy(VALID_REPORT)
         value["tabs"].append(copy.deepcopy(APPLE_TAB))
 
         report = protocol.validate_report(value)
 
         self.assertIn(APPLE_TAB, report["tabs"])
+
+    def test_accepts_and_detaches_apple_playback_fields(self):
+        playback = {
+            "position": 42.5,
+            "duration": 207.0,
+            "playing": True,
+            "sampledAt": 1_750_000_000_000,
+        }
+        value = copy.deepcopy(VALID_REPORT)
+        value["tabs"].append({**APPLE_TAB, **playback})
+
+        report = protocol.validate_report(value)
+
+        expected = {**APPLE_TAB, **playback, "sampledAt": 1_750_000_000_000.0}
+        self.assertIn(expected, report["tabs"])
+
+    def test_accepts_null_playback_duration(self):
+        value = copy.deepcopy(VALID_REPORT)
+        value["tabs"].append(
+            {
+                **APPLE_TAB,
+                "position": 3.0,
+                "duration": None,
+                "playing": False,
+                "sampledAt": 1_750_000_000_000,
+            }
+        )
+
+        report = protocol.validate_report(value)
+
+        self.assertIsNone(report["tabs"][-1]["duration"])
+
+    def test_rejects_invalid_playback_fields(self):
+        playback = {
+            "position": 42.5,
+            "duration": 207.0,
+            "playing": True,
+            "sampledAt": 1_750_000_000_000,
+        }
+        invalid_tabs = [
+            # Playback timing is only meaningful for the Apple Music player.
+            {"host": "soundcloud.com", "mediaId": None, "title": "T", **playback},
+            # The field group must be complete.
+            {**APPLE_TAB, "position": 42.5},
+            {**APPLE_TAB, **{k: v for k, v in playback.items() if k != "sampledAt"}},
+            # Bounds and types.
+            {**APPLE_TAB, **playback, "position": -1},
+            {**APPLE_TAB, **playback, "position": 24 * 60 * 60 + 1},
+            {**APPLE_TAB, **playback, "position": True},
+            {**APPLE_TAB, **playback, "position": "42"},
+            {**APPLE_TAB, **playback, "duration": -1},
+            {**APPLE_TAB, **playback, "duration": "207"},
+            {**APPLE_TAB, **playback, "playing": 1},
+            {**APPLE_TAB, **playback, "sampledAt": None},
+            {**APPLE_TAB, **playback, "sampledAt": -5},
+            {**APPLE_TAB, **playback, "sampledAt": 9e15},
+        ]
+
+        for tab in invalid_tabs:
+            with self.subTest(tab=tab):
+                value = copy.deepcopy(VALID_REPORT)
+                value["tabs"].append(tab)
+                with self.assertRaises(protocol.ProtocolError) as raised:
+                    protocol.validate_report(value)
+                self.assertEqual(raised.exception.status, 400)
+
+    def test_rejects_non_finite_playback_numbers(self):
+        # Infinity/NaN cannot arrive through parse_report_body (its JSON
+        # decoder rejects them) but validate_report must hold on its own.
+        for position in (float("inf"), float("nan")):
+            with self.subTest(position=position):
+                value = copy.deepcopy(VALID_REPORT)
+                value["tabs"].append(
+                    {
+                        **APPLE_TAB,
+                        "position": position,
+                        "duration": None,
+                        "playing": True,
+                        "sampledAt": 1_750_000_000_000,
+                    }
+                )
+                with self.assertRaises(protocol.ProtocolError):
+                    protocol.validate_report(value)
 
 
 class RequestValidationTests(unittest.TestCase):
@@ -315,6 +398,29 @@ class ServicePolicyTests(unittest.TestCase):
         report["services"]["appleMusic"] = True
         report["enabled"] = False
         self.assertIsNone(protocol.untitled_service_tab(report))
+
+    def test_has_unpublishable_audible_tab_flags_blocked_and_disabled(self):
+        clean = copy.deepcopy(VALID_REPORT)
+        clean["tabs"].append(copy.deepcopy(APPLE_TAB))
+        # Every audible tab is an enabled music service.
+        self.assertFalse(protocol.has_unpublishable_audible_tab(clean))
+
+        # A regular (blocked) YouTube video audible alongside the music tabs.
+        with_video = copy.deepcopy(clean)
+        with_video["tabs"].append(
+            {"host": "youtube.com", "mediaId": None, "title": "Some Clip - YouTube"}
+        )
+        self.assertTrue(protocol.has_unpublishable_audible_tab(with_video))
+
+        # A disabled service that is still audible is also unpublishable.
+        disabled = copy.deepcopy(clean)
+        disabled["services"]["soundcloud"] = False
+        self.assertTrue(protocol.has_unpublishable_audible_tab(disabled))
+
+        # The master switch off short-circuits; nothing is published anyway.
+        with_video["enabled"] = False
+        self.assertFalse(protocol.has_unpublishable_audible_tab(with_video))
+        self.assertFalse(protocol.has_unpublishable_audible_tab(None))
 
     def test_report_freshness_is_bounded(self):
         self.assertTrue(protocol.report_is_fresh(100, now=100))

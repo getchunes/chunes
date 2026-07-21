@@ -2,6 +2,8 @@
 
 <img src="assets/logo.svg" alt="Chunes logo" width="160">
 
+[![Chunes release](https://img.shields.io/github/v/release/getchunes/chunes?label=Chunes)](https://github.com/getchunes/chunes/releases/latest) [![Chune ID on the Chrome Web Store](https://img.shields.io/chrome-web-store/v/ofbfkbhgfhoapckgjcpmcohbhnogpfjd?label=Chune%20ID)](https://chromewebstore.google.com/detail/chune-id/ofbfkbhgfhoapckgjcpmcohbhnogpfjd)
+
 Chunes shows SoundCloud and YouTube Music playback as a Discord **Listening to**
 status on Windows. It runs in the notification area, clears the status when
 playback pauses, and labels both supported services correctly.
@@ -10,8 +12,10 @@ playback pauses, and labels both supported services correctly.
 
 - 64-bit Windows 10 or Windows 11
 - the Discord desktop app running on the same PC
-- the [Chune ID browser extension](https://github.com/getchunes/chunes-extension)
-  for accurate browser service, pause, and enable/disable filtering
+- the [Chune ID browser extension](https://chromewebstore.google.com/detail/chune-id/ofbfkbhgfhoapckgjcpmcohbhnogpfjd)
+  for accurate browser service, pause, and enable/disable filtering. This
+  Chunes release speaks protocol 3 and requires Chune ID 1.0.6 or newer;
+  the [extension source is on GitHub](https://github.com/getchunes/chunes-extension)
 
 ## Install
 
@@ -23,8 +27,9 @@ playback pauses, and labels both supported services correctly.
 4. Review the installer update and online-artwork options and the
    [privacy policy](PRIVACY.md). Both network features default to on and can be
    unchecked independently before install.
-5. Install Chune ID and make sure Discord's **Share my activity** setting is on
-   and the Discord status is not Invisible.
+5. Install [Chune ID](https://chromewebstore.google.com/detail/chune-id/ofbfkbhgfhoapckgjcpmcohbhnogpfjd)
+   and make sure Discord's **Share my activity** setting is on and the Discord
+   status is not Invisible.
 
 Run a newer MSI to upgrade Chunes or rerun the current MSI to repair it. Windows
 **Installed apps** can uninstall Chunes. New MSI releases use a stable
@@ -90,10 +95,12 @@ report expires after 90 seconds. The tray displays **Chune ID: on**, **off**, or
 **not connected** so the extension master state is visible without duplicating
 its control in the app.
 
-Every successful desktop response includes `X-Chunes-Protocol: 2`. Chune ID
+Every successful desktop response includes `X-Chunes-Protocol: 3`. Chune ID
 must require that header before accepting a `200` or `204` response, so an old
-desktop listener cannot be mistaken for protocol v2. Chune ID and Chunes 1.0.1
-replace the protocol-1 payload as a coordinated upgrade.
+desktop listener cannot be mistaken for protocol v3. Protocol 3 adds optional,
+bounds-checked Apple Music timing fields and ships as a coordinated upgrade:
+this Chunes release supports Chune ID 1.0.6 or newer, and older builds that
+still expect protocol 2 are treated as an incompatible desktop version.
 
 Without Chune ID, Chunes can still use Windows media metadata, but it cannot
 reliably distinguish supported music from unrelated browser playback or retain
