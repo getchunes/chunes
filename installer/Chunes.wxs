@@ -3,7 +3,7 @@
   xmlns="http://schemas.microsoft.com/wix/2006/wi"
   xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <?ifndef ProductVersion ?>
-    <?define ProductVersion="1.0.9" ?>
+    <?define ProductVersion="1.0.10" ?>
   <?endif ?>
   <?ifndef SourceDir ?>
     <?define SourceDir="..\dist" ?>
@@ -41,11 +41,9 @@
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Property Id="ARPPRODUCTICON" Value="ChunesIcon" />
+    <Property Id="ARPPUBLISHER" Value="https://github.com/getchunes" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/getchunes/chunes" />
     <Property Id="ARPHELPLINK" Value="https://github.com/getchunes/chunes/issues" />
-    <Property
-      Id="WIXUI_EXITDIALOGOPTIONALTEXT"
-      Value="For accurate SoundCloud, YouTube Music, and Apple Music detection, install the Chune ID browser extension from the Chrome Web Store: https://chromewebstore.google.com/detail/chune-id/ofbfkbhgfhoapckgjcpmcohbhnogpfjd" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <Property
       Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
@@ -151,6 +149,12 @@
     </InstallExecuteSequence>
 
     <Icon Id="ChunesIcon" SourceFile="$(var.ProjectDir)\assets\chunes-tray.ico" />
+    <WixVariable
+      Id="WixUIBannerBmp"
+      Value="$(var.ProjectDir)\installer\assets\chunes-banner.bmp" />
+    <WixVariable
+      Id="WixUIDialogBmp"
+      Value="$(var.ProjectDir)\installer\assets\chunes-dialog.bmp" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="LocalAppDataFolder">
@@ -244,7 +248,6 @@
       <DialogRef Id="BrowseDlg" />
       <DialogRef Id="DiskCostDlg" />
       <DialogRef Id="ErrorDlg" />
-      <DialogRef Id="ExitDialog" />
       <DialogRef Id="FatalError" />
       <DialogRef Id="FilesInUse" />
       <DialogRef Id="InstallDirDlg" />
@@ -257,6 +260,111 @@
       <DialogRef Id="UserExit" />
       <DialogRef Id="VerifyReadyDlg" />
       <DialogRef Id="WelcomeDlg" />
+
+      <Dialog Id="ChuneIdExitDialog" Width="370" Height="270" Title="Chunes Setup">
+        <Control
+          Id="Finish"
+          Type="PushButton"
+          X="236"
+          Y="243"
+          Width="56"
+          Height="17"
+          Default="yes"
+          Cancel="yes"
+          Text="Finish" />
+        <Control
+          Id="Cancel"
+          Type="PushButton"
+          X="304"
+          Y="243"
+          Width="56"
+          Height="17"
+          Disabled="yes"
+          Text="Cancel" />
+        <Control
+          Id="Bitmap"
+          Type="Bitmap"
+          X="0"
+          Y="0"
+          Width="164"
+          Height="234"
+          TabSkip="no"
+          Text="WixUI_Bmp_Dialog" />
+        <Control
+          Id="Back"
+          Type="PushButton"
+          X="180"
+          Y="243"
+          Width="56"
+          Height="17"
+          Disabled="yes"
+          Text="Back" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
+        <Control
+          Id="Title"
+          Type="Text"
+          X="180"
+          Y="25"
+          Width="180"
+          Height="35"
+          Transparent="yes"
+          NoPrefix="yes"
+          Text="Completed the Chunes Setup Wizard" />
+        <Control
+          Id="Description"
+          Type="Text"
+          X="180"
+          Y="88"
+          Width="175"
+          Height="24"
+          Transparent="yes"
+          NoPrefix="yes"
+          Text="Click Finish to exit the Setup Wizard." />
+        <Control
+          Id="ExtensionText"
+          Type="Text"
+          X="180"
+          Y="125"
+          Width="175"
+          Height="40"
+          Transparent="yes"
+          NoPrefix="yes"
+          Hidden="yes"
+          Text="Chune ID is Chunes' required browser companion for SoundCloud, YouTube Music, and Apple Music detection.">
+          <Condition Action="show">NOT Installed</Condition>
+        </Control>
+        <Control
+          Id="ExtensionLink"
+          Type="Hyperlink"
+          X="180"
+          Y="168"
+          Width="175"
+          Height="17"
+          Hidden="yes"
+          Text="&lt;a href=&quot;https://chromewebstore.google.com/detail/chune-id/ofbfkbhgfhoapckgjcpmcohbhnogpfjd&quot;&gt;Install Chune ID from Chrome Web Store&lt;/a&gt;">
+          <Condition Action="show">NOT Installed</Condition>
+        </Control>
+        <Control
+          Id="OptionalCheckBox"
+          Type="CheckBox"
+          X="180"
+          Y="195"
+          Width="175"
+          Height="30"
+          Hidden="yes"
+          Property="WIXUI_EXITDIALOGOPTIONALCHECKBOX"
+          CheckBoxValue="1"
+          Text="[WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT]">
+          <Condition Action="show">WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT AND NOT Installed</Condition>
+        </Control>
+      </Dialog>
+
+      <InstallUISequence>
+        <Show Dialog="ChuneIdExitDialog" OnExit="success" />
+      </InstallUISequence>
+      <AdminUISequence>
+        <Show Dialog="ChuneIdExitDialog" OnExit="success" />
+      </AdminUISequence>
 
       <?ifdef UnsignedManualRelease ?>
       <Dialog
@@ -478,13 +586,13 @@
         Order="4"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID<>"1"]]></Publish>
 
       <Publish
-        Dialog="ExitDialog"
+        Dialog="ChuneIdExitDialog"
         Control="Finish"
         Event="DoAction"
         Value="LaunchChunes"
         Order="1">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed</Publish>
       <Publish
-        Dialog="ExitDialog"
+        Dialog="ChuneIdExitDialog"
         Control="Finish"
         Event="EndDialog"
         Value="Return"
@@ -643,6 +751,5 @@
       <Property Id="ARPNOMODIFY" Value="1" />
     </UI>
 
-    <UIRef Id="WixUI_Common" />
   </Product>
 </Wix>

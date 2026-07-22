@@ -37,6 +37,34 @@ class ReportValidationTests(unittest.TestCase):
 
         self.assertEqual(report, VALID_REPORT)
 
+    def test_accepts_explicit_v4_page_metadata(self):
+        value = copy.deepcopy(VALID_REPORT)
+        value["protocol"] = 4
+        value["tabs"][0]["metadata"] = {
+            "title": "Song",
+            "artist": "Artist",
+            "artwork": "https://i1.sndcdn.com/artwork.jpg",
+        }
+
+        report, version = protocol.validate_report(value, include_version=True)
+
+        self.assertEqual(version, 4)
+        self.assertEqual(report["tabs"][0]["metadata"], value["tabs"][0]["metadata"])
+
+    def test_v3_rejects_page_metadata_and_v4_requires_marker(self):
+        value = copy.deepcopy(VALID_REPORT)
+        value["tabs"][0]["metadata"] = {
+            "title": "Song",
+            "artist": "Artist",
+            "artwork": None,
+        }
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.validate_report(value)
+
+        value["protocol"] = 3
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.validate_report(value)
+
     def test_rejects_non_exact_payloads(self):
         invalid = []
 

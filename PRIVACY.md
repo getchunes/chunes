@@ -19,12 +19,13 @@ Controls:
 The Chune ID browser extension sends Chunes an `application/json` report over
 the loopback interface at `127.0.0.1:52846`. That report contains the
 extension's master enabled state, the SoundCloud, YouTube Music, and Apple Music
-enabled states, and the host and title of reported audible tabs. A YouTube Music
-report can also contain the watch page's 11-character public video ID for exact
-album art lookup. An Apple Music report carries host and title only; the media
-ID is always null for Apple Music. It does not contain general browsing history,
-page body contents, cookies, account credentials, or full URLs. Loopback reports
-are held in memory and expire after 90 seconds.
+enabled states, and the host and title of reported audible tabs. Protocol 4
+reports can also carry the current page Media Session title, artist, and a
+provider-hosted artwork URL for the supported audible tab. YouTube Music reports
+can additionally contain the watch page's 11-character public video ID. Apple
+Music reports carry bounds-checked MusicKit timing. The report does not contain
+general browsing history, page body contents, cookies, account credentials, or
+full URLs. Loopback reports are held in memory and expire after 90 seconds.
 
 Chunes stores these items on the PC:
 
@@ -61,17 +62,15 @@ quit Chunes from its tray menu and turn off **Start with Windows** if enabled.
 When **Look up online album art** is checked, Chunes uses the identified service
 to find artwork:
 
-- For SoundCloud, or when a non-browser track has no identified service, Chunes
-  contacts SoundCloud's public website, public web application scripts, and
-  public track search API. The search includes the current track title and
-  artist.
-- For YouTube Music, Chunes sends the public video ID to YouTube Music's public
-  web metadata endpoint. It accepts only an exact matching track and square
-  Google-hosted music artwork; it does not use a generic YouTube video
-  thumbnail or fall back to SoundCloud.
-- For Apple Music, Chunes sends the current track title and artist to Apple's
-  public iTunes Search API (itunes.apple.com/search, keyless). It uses the
-  returned Apple-hosted artwork URL for matching results.
+- For protocol 4 SoundCloud, YouTube Music, and Apple Music tabs, Chunes uses
+  the current page's provider-hosted artwork URL sent locally by Chune ID. It
+  makes no provider lookup.
+- For protocol 3 Chune ID while its Chrome Web Store update is pending, Chunes
+  retains the previous SoundCloud and YouTube Music artwork fallback. SoundCloud
+  receives a title/artist search; YouTube Music uses its public video thumbnail.
+- For Apple Music without a fresh MusicKit artwork URL, Chunes may send the
+  current track title and artist to Apple's public iTunes Search API
+  (itunes.apple.com/search, keyless).
 
 These requests necessarily expose the user's IP address and a generic desktop
 browser user-agent to the selected service and its infrastructure. YouTube
@@ -93,9 +92,10 @@ Apple's privacy policy applies to Apple Music artwork lookups:
 https://www.apple.com/legal/privacy/
 
 Clear **Look up online album art** in the tray menu to stop all artwork lookup
-requests. The choice is stored locally and takes effect for the current track
-on the next polling cycle. The installer shows a separate artwork checkbox that
-defaults to on, and preserves an existing opt-out during upgrades.
+requests and all use of provider artwork URLs. The choice is stored locally and
+takes effect for the current track on the next polling cycle. The installer shows
+a separate artwork checkbox that defaults to on, and preserves an existing
+opt-out during upgrades.
 
 ## GitHub updates
 
