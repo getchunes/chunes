@@ -92,7 +92,7 @@ class TrayStatusTests(unittest.TestCase):
         )
         self.assertEqual(chunes.current_track_text(), "Song - Artist")
         self.assertEqual(chunes.extension_state_text(), "Chune ID: on")
-        self.assertEqual(chunes.version_text(), "Chunes v1.0.10")
+        self.assertEqual(chunes.version_text(), "Chunes v1.0.11")
 
         chunes.presence.set_status(track=None, extension_enabled=False)
         self.assertEqual(chunes.current_track_text(), "Nothing playing")
@@ -100,7 +100,7 @@ class TrayStatusTests(unittest.TestCase):
 
         chunes.presence.set_status(extension_enabled=None, extension_protocol=None)
         self.assertEqual(chunes.extension_state_text(), "Chune ID: not connected")
-        self.assertEqual(chunes.version_text(), "Chunes v1.0.10")
+        self.assertEqual(chunes.version_text(), "Chunes v1.0.11")
 
     def test_status_change_refreshes_the_native_menu(self):
         old = {"track": None, "extension_enabled": None, "extension_protocol": None}
