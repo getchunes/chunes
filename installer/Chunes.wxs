@@ -149,9 +149,9 @@
     </InstallExecuteSequence>
 
     <Icon Id="ChunesIcon" SourceFile="$(var.ProjectDir)\assets\chunes-tray.ico" />
-    <WixVariable
-      Id="WixUIBannerBmp"
-      Value="$(var.ProjectDir)\installer\assets\chunes-banner.bmp" />
+    <Binary
+      Id="ChunesExitDialogBitmap"
+      SourceFile="$(var.ProjectDir)\installer\assets\chunes-exit-dialog.bmp" />
     <WixVariable
       Id="WixUIDialogBmp"
       Value="$(var.ProjectDir)\installer\assets\chunes-dialog.bmp" />
@@ -289,7 +289,7 @@
           Width="164"
           Height="234"
           TabSkip="no"
-          Text="WixUI_Bmp_Dialog" />
+          Text="ChunesExitDialogBitmap" />
         <Control
           Id="Back"
           Type="PushButton"

@@ -87,12 +87,13 @@ class PackagingTests(unittest.TestCase):
             for item in self.product.findall("w:WixVariable", WIX_NS)
         }
         self.assertEqual(
-            variables["WixUIBannerBmp"],
-            "$(var.ProjectDir)\\installer\\assets\\chunes-banner.bmp",
-        )
-        self.assertEqual(
             variables["WixUIDialogBmp"],
             "$(var.ProjectDir)\\installer\\assets\\chunes-dialog.bmp",
+        )
+        bitmap = self.product.find("w:Binary[@Id='ChunesExitDialogBitmap']", WIX_NS)
+        self.assertEqual(
+            bitmap.attrib["SourceFile"],
+            "$(var.ProjectDir)\\installer\\assets\\chunes-exit-dialog.bmp",
         )
 
     def test_first_install_privacy_checkboxes_and_opt_outs_are_authored(self):
