@@ -153,11 +153,14 @@ class DiscordFrameTests(unittest.TestCase):
 
 
 class DesktopProtocolTests(unittest.TestCase):
-    def test_success_responses_advertise_protocol_v3(self):
+    def test_success_responses_advertise_requested_protocol(self):
         for status in (200, 204):
-            with self.subTest(status=status):
-                reply = presence._http_reply(status, b"{}" if status == 200 else b"")
-                self.assertIn(b"X-Chunes-Protocol: 3\r\n", reply)
+            for version in (3, 4):
+                with self.subTest(status=status, version=version):
+                    reply = presence._http_reply(
+                        status, b"{}" if status == 200 else b"", version
+                    )
+                    self.assertIn(f"X-Chunes-Protocol: {version}\r\n".encode(), reply)
         self.assertNotIn(b"X-Chunes-Protocol", presence._http_reply(400))
 
     def test_tab_report_response_carries_current_track_and_host(self):
@@ -189,6 +192,19 @@ class DesktopProtocolTests(unittest.TestCase):
         self.assertEqual(
             payload, {"status": "ok", "track": None, "host": None}
         )
+
+    def test_protocol4_page_metadata_owns_provider_track_identity(self):
+        tab = {
+            "host": "music.youtube.com",
+            "mediaId": "a1B2c3D4e5F",
+            "title": "Previous Song | YouTube Music",
+            "metadata": {"title": "Next Song", "artist": "Next Artist", "artwork": None},
+        }
+
+        self.assertEqual(
+            presence.protocol4_page_track(tab, 4), ("Next Song", "Next Artist")
+        )
+        self.assertIsNone(presence.protocol4_page_track(tab, 3))
 
     def test_classification_fallback_and_labels_cover_both_services(self):
         report = {
@@ -372,132 +388,23 @@ class DesktopProtocolTests(unittest.TestCase):
 
 
 class ArtworkTests(unittest.TestCase):
-    VIDEO_ID = "a1B2c3D4e5F"
-    ALBUM_ART = (
-        "https://yt3.googleusercontent.com/album-art=w544-h544-l90-rj"
-    )
-
     def setUp(self):
         presence._artwork_cache.clear()
-        presence._ytm_client = None
 
-    @staticmethod
-    def youtube_music_response(video_id, thumbnails):
-        return {
-            "contents": {
-                "singleColumnMusicWatchNextResultsRenderer": {
-                    "tabbedRenderer": {
-                        "watchNextTabbedResultsRenderer": {
-                            "tabs": [
-                                {
-                                    "tabRenderer": {
-                                        "content": {
-                                            "musicQueueRenderer": {
-                                                "content": {
-                                                    "playlistPanelRenderer": {
-                                                        "contents": [
-                                                            {
-                                                                "playlistPanelVideoRenderer": {
-                                                                    "videoId": video_id,
-                                                                    "thumbnail": {
-                                                                        "thumbnails": thumbnails
-                                                                    },
-                                                                }
-                                                            }
-                                                        ]
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
-        }
-
-    def test_youtube_music_client_values_come_from_youtube_music(self):
-        page = (
-            '<script>ytcfg.set({"INNERTUBE_API_KEY":"public-key",'
-            '"INNERTUBE_CLIENT_VERSION":"1.20260718.01.00",'
-            '"VISITOR_DATA":"visitor"});</script>'
-        )
-        with mock.patch.object(presence, "_http_get", return_value=page) as get:
-            self.assertEqual(
-                presence._youtube_music_client(),
-                {
-                    "INNERTUBE_API_KEY": "public-key",
-                    "INNERTUBE_CLIENT_VERSION": "1.20260718.01.00",
-                    "VISITOR_DATA": "visitor",
-                },
-            )
-        get.assert_called_once_with(
-            "https://music.youtube.com/", {"Cookie": "SOCS=CAI"}
-        )
-
-    def test_youtube_music_uses_exact_square_music_artwork(self):
-        response = self.youtube_music_response(
-            self.VIDEO_ID,
-            [
-                {
-                    "url": "https://i.ytimg.com/vi/a1B2c3D4e5F/maxresdefault.jpg",
-                    "width": 1280,
-                    "height": 720,
-                },
-                {"url": self.ALBUM_ART, "width": 544, "height": 544},
-            ],
-        )
-        client = {
-            "INNERTUBE_API_KEY": "public-key",
-            "INNERTUBE_CLIENT_VERSION": "1.20260718.01.00",
-            "VISITOR_DATA": "visitor",
-        }
-        with (
-            mock.patch.object(presence, "_youtube_music_client", return_value=client),
-            mock.patch.object(
-                presence, "_http_post_json", return_value=response
-            ) as post,
-        ):
-            self.assertEqual(
-                presence._find_youtube_music_artwork(self.VIDEO_ID),
-                self.ALBUM_ART,
-            )
-
-        url, body, headers = post.call_args.args
-        self.assertIn("music.youtube.com/youtubei/v1/next", url)
-        self.assertEqual(body["videoId"], self.VIDEO_ID)
-        self.assertEqual(body["playlistId"], f"RDAMVM{self.VIDEO_ID}")
-        self.assertEqual(headers["X-Goog-Visitor-Id"], "visitor")
-
-    def test_youtube_music_falls_back_to_video_thumbnail_without_soundcloud(self):
-        response = self.youtube_music_response(
-            self.VIDEO_ID,
-            [
-                {
-                    "url": "https://i.ytimg.com/vi/a1B2c3D4e5F/hqdefault.jpg",
-                    "width": 480,
-                    "height": 360,
-                }
-            ],
-        )
-        client = {
-            "INNERTUBE_API_KEY": "public-key",
-            "INNERTUBE_CLIENT_VERSION": "1.20260718.01.00",
-        }
-        with (
-            mock.patch.object(presence, "_youtube_music_client", return_value=client),
-            mock.patch.object(presence, "_http_post_json", return_value=response),
-            mock.patch.object(presence, "_find_soundcloud_artwork") as soundcloud,
-        ):
+    def test_page_metadata_artwork_needs_no_desktop_network_request(self):
+        artwork = "https://i.ytimg.com/vi/a1B2c3D4e5F/hqdefault.jpg"
+        with mock.patch.object(presence, "_http_get") as get:
             self.assertEqual(
                 presence.find_artwork(
-                    "Track", "Artist", "music.youtube.com", self.VIDEO_ID
+                    "Track",
+                    "Artist",
+                    "music.youtube.com",
+                    "a1B2c3D4e5F",
+                    metadata={"title": "Track", "artist": "Artist", "artwork": artwork},
                 ),
-                "https://i.ytimg.com/vi/a1B2c3D4e5F/hqdefault.jpg"
+                artwork,
             )
-        soundcloud.assert_not_called()
+        get.assert_not_called()
 
     def test_apple_music_artwork_comes_from_itunes_search_only(self):
         small = (
@@ -510,15 +417,11 @@ class ArtworkTests(unittest.TestCase):
                 ]
             }
         )
-        with (
-            mock.patch.object(presence, "_http_get", return_value=response) as get,
-            mock.patch.object(presence, "_find_soundcloud_artwork") as soundcloud,
-        ):
+        with mock.patch.object(presence, "_http_get", return_value=response) as get:
             art = presence.find_artwork(
                 "Real Song", "Some Artist", "music.apple.com", None, "brave"
             )
 
-        soundcloud.assert_not_called()
         self.assertEqual(
             art,
             "https://is1-ssl.mzstatic.com/image/thumb/Music/cover/500x500bb.jpg",
@@ -557,19 +460,15 @@ class ArtworkTests(unittest.TestCase):
             self.assertEqual(dur, 228.0)
 
     def test_apple_music_artwork_failure_yields_no_art(self):
-        with (
-            mock.patch.object(presence, "_http_get", side_effect=OSError("down")),
-            mock.patch.object(presence, "_find_soundcloud_artwork") as soundcloud,
-        ):
+        with mock.patch.object(presence, "_http_get", side_effect=OSError("down")):
             self.assertIsNone(
                 presence.find_artwork(
                     "Real Song", "Some Artist", "music.apple.com", None, "brave"
                 )
             )
-        soundcloud.assert_not_called()
 
     def test_unidentified_browser_track_is_not_sent_to_soundcloud(self):
-        with mock.patch.object(presence, "_find_soundcloud_artwork") as soundcloud:
+        with mock.patch.object(presence, "_legacy_soundcloud_info") as soundcloud:
             self.assertIsNone(
                 presence.find_artwork(
                     "Video", "Channel", source="Google.Chrome_123"
@@ -645,25 +544,37 @@ class ProviderDurationGuardTests(unittest.TestCase):
         self.assertEqual(dur, 180.0)
         self.assertEqual(art, "https://is1.mzstatic.com/b/500x500bb.jpg")
 
-    def test_soundcloud_duration_not_taken_from_unmatched_result(self):
-        response = json.dumps(
-            {
-                "collection": [
-                    {
-                        "title": "Gimme Dat",
-                        "duration": 204000,
-                        "artwork_url": "https://i1.sndcdn.com/x-large.jpg",
-                    }
-                ]
-            }
+    def test_soundcloud_page_metadata_has_no_duration_guess(self):
+        art, dur = presence.find_artwork_and_info(
+            "Gimme Dat Ting",
+            "Davido",
+            "soundcloud.com",
+            metadata={
+                "title": "Gimme Dat Ting",
+                "artist": "Davido",
+                "artwork": "https://i1.sndcdn.com/x-large.jpg",
+            },
         )
-        with (
-            mock.patch.object(presence, "_soundcloud_client_id", return_value="cid"),
-            mock.patch.object(presence, "_http_get", return_value=response),
-        ):
-            art, dur = presence._find_soundcloud_info("Gimme Dat Ting", "Davido")
         self.assertEqual(dur, 0.0)
-        self.assertEqual(art, "https://i1.sndcdn.com/x-t500x500.jpg")
+        self.assertEqual(art, "https://i1.sndcdn.com/x-large.jpg")
+
+    def test_zero_background_position_keeps_provider_anchor(self):
+        seen = {("Track", "Artist"): (1_000, 180.0)}
+        self.assertEqual(
+            presence.provider_duration_start("Track", "Artist", 0.0, 180.0, seen, 1_004),
+            1_000,
+        )
+        self.assertEqual(
+            presence.provider_duration_start("Track", "Artist", 0.0, 180.0, seen, 1_211),
+            1_211,
+        )
+
+    def test_stale_low_position_keeps_provider_anchor(self):
+        seen = {("Track", "Artist"): (1_000, 180.0)}
+        self.assertEqual(
+            presence.provider_duration_start("Track", "Artist", 5.0, 180.0, seen, 1_020),
+            1_000,
+        )
 
 
 class AppleTimingHelperTests(unittest.TestCase):

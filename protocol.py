@@ -5,6 +5,7 @@ import json
 import math
 import re
 import time
+from urllib.parse import urlsplit
 
 
 MAX_HEADER_BYTES = 8192
@@ -13,17 +14,22 @@ MAX_TABS = 64
 MAX_HOST_CHARS = 253
 MAX_TITLE_CHARS = 512
 MAX_MEDIA_ID_CHARS = 11
+MAX_ARTWORK_URL_CHARS = 2048
 MAX_PLAYBACK_SECONDS = 24 * 60 * 60
 MAX_SAMPLED_AT_MS = 8.64e15  # largest epoch a JavaScript Date can represent
 REPORT_TTL_SECONDS = 90
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 REPORT_KEYS = {"enabled", "services", "tabs"}
+PROTOCOL_KEY = "protocol"
+LEGACY_PROTOCOL_VERSION = 3
 TAB_KEYS = {"host", "mediaId", "title"}
 # Page-level playback timing measured by the extension (MusicKit). Only the
 # Apple Music web player needs it: its OS media session misreports position
 # and duration, while SoundCloud/YTM are already correct without help.
 PLAYBACK_KEYS = {"position", "duration", "playing", "sampledAt"}
+PAGE_METADATA_KEY = "metadata"
+PAGE_METADATA_KEYS = {"title", "artist", "artwork"}
 SERVICE_KEYS = {"appleMusic", "soundcloud", "youtubeMusic"}
 SERVICE_LABELS = {
     "appleMusic": "Apple Music",
@@ -86,8 +92,8 @@ def _validate_playback_number(value, maximum):
     return number
 
 
-def _validate_tab_playback(tab, host):
-    """Validated playback fields for a tab, or an empty dict without them."""
+def _validate_tab_playback(tab, host, version):
+    """Validated page playback fields for the Apple Music player."""
     present = set(tab) & PLAYBACK_KEYS
     if not present:
         return {}
@@ -116,9 +122,70 @@ def _validate_tab_playback(tab, host):
     }
 
 
-def validate_report(value):
-    """Return a detached report after validating the exact v3 schema."""
-    if not isinstance(value, dict) or set(value) != REPORT_KEYS:
+def _validate_page_metadata(tab, host):
+    """Validated current page Media Session metadata, if supplied."""
+    metadata = tab.get(PAGE_METADATA_KEY)
+    if metadata is None:
+        return {}
+    service = service_for_host(host)
+    if service not in {"appleMusic", "soundcloud", "youtubeMusic"}:
+        raise ProtocolError(400, "Unexpected page metadata")
+    if not isinstance(metadata, dict) or set(metadata) != PAGE_METADATA_KEYS:
+        raise ProtocolError(400, "Invalid page metadata")
+
+    title = metadata["title"]
+    artist = metadata["artist"]
+    artwork = metadata["artwork"]
+    if not isinstance(title, str) or not title.strip() or len(title) > MAX_TITLE_CHARS:
+        raise ProtocolError(400, "Invalid page title")
+    if not isinstance(artist, str) or len(artist) > MAX_TITLE_CHARS:
+        raise ProtocolError(400, "Invalid page artist")
+    if artwork is not None:
+        if not isinstance(artwork, str) or not 0 < len(artwork) <= MAX_ARTWORK_URL_CHARS:
+            raise ProtocolError(400, "Invalid page artwork")
+        parsed = urlsplit(artwork)
+        hostname = (parsed.hostname or "").lower()
+        allowed_artwork = {
+            "appleMusic": hostname.endswith(".mzstatic.com"),
+            "soundcloud": hostname.endswith(".sndcdn.com"),
+            "youtubeMusic": hostname in {
+                "i.ytimg.com",
+                "lh3.googleusercontent.com",
+                "yt3.ggpht.com",
+                "yt3.googleusercontent.com",
+            },
+        }[service]
+        if (
+            parsed.scheme != "https"
+            or parsed.username is not None
+            or parsed.password is not None
+            or not allowed_artwork
+        ):
+            raise ProtocolError(400, "Invalid page artwork")
+
+    return {
+        PAGE_METADATA_KEY: {
+            "title": title.strip(),
+            "artist": artist.strip(),
+            "artwork": artwork,
+        }
+    }
+
+
+def validate_report(value, include_version=False):
+    """Return a detached legacy v3 or explicit v4 report.
+
+    Compatibility is intentionally localized here: v3 has the historical
+    exact shape, while v4 adds an explicit marker before it may carry page
+    metadata. Remove the v3 branch when its supported-release window ends.
+    """
+    if not isinstance(value, dict):
+        raise ProtocolError(400, "Invalid report object")
+    if set(value) == REPORT_KEYS:
+        version = LEGACY_PROTOCOL_VERSION
+    elif set(value) == REPORT_KEYS | {PROTOCOL_KEY} and value[PROTOCOL_KEY] == PROTOCOL_VERSION:
+        version = PROTOCOL_VERSION
+    else:
         raise ProtocolError(400, "Invalid report object")
     if type(value["enabled"]) is not bool:
         raise ProtocolError(400, "Invalid enabled value")
@@ -135,7 +202,8 @@ def validate_report(value):
 
     clean_tabs = []
     for tab in tabs:
-        if not isinstance(tab, dict) or not TAB_KEYS <= set(tab) <= TAB_KEYS | PLAYBACK_KEYS:
+        optional_keys = PLAYBACK_KEYS | ({PAGE_METADATA_KEY} if version == PROTOCOL_VERSION else set())
+        if not isinstance(tab, dict) or not TAB_KEYS <= set(tab) <= TAB_KEYS | optional_keys:
             raise ProtocolError(400, "Invalid tab object")
         host = tab["host"]
         media_id = tab["mediaId"]
@@ -157,10 +225,12 @@ def validate_report(value):
         elif media_id is not None:
             raise ProtocolError(400, "Unexpected tab media ID")
         clean_tab = {"host": host, "mediaId": media_id, "title": title}
-        clean_tab.update(_validate_tab_playback(tab, host))
+        clean_tab.update(_validate_tab_playback(tab, host, version))
+        if version == PROTOCOL_VERSION:
+            clean_tab.update(_validate_page_metadata(tab, host))
         clean_tabs.append(clean_tab)
 
-    return {
+    report = {
         "enabled": value["enabled"],
         "services": {
             "appleMusic": services["appleMusic"],
@@ -169,9 +239,10 @@ def validate_report(value):
         },
         "tabs": clean_tabs,
     }
+    return (report, version) if include_version else report
 
 
-def parse_report_body(body):
+def parse_report_body(body, include_version=False):
     if not body or len(body) > MAX_BODY_BYTES:
         raise ProtocolError(400, "Invalid body size")
     try:
@@ -182,7 +253,7 @@ def parse_report_body(body):
         )
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProtocolError(400, "Invalid JSON") from exc
-    return validate_report(value)
+    return validate_report(value, include_version)
 
 
 def parse_request_head(raw_head):

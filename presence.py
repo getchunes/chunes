@@ -52,7 +52,12 @@ DEFAULT_CONFIG = {
 }
 
 # Live state for the tray app.
-status = {"track": None, "host": None, "extension_enabled": None}
+status = {
+    "track": None,
+    "host": None,
+    "extension_enabled": None,
+    "extension_protocol": None,
+}
 _status_lock = threading.Lock()
 
 
@@ -133,17 +138,21 @@ _tab_state = {
     "tabs": [],
 }
 _tab_reported_at = 0.0
+_tab_protocol_version = protocol.LEGACY_PROTOCOL_VERSION
 
 
 def _fresh_tab_report():
     if protocol.report_is_fresh(_tab_reported_at):
-        set_status(extension_enabled=_tab_state["enabled"])
+        set_status(
+            extension_enabled=_tab_state["enabled"],
+            extension_protocol=_tab_protocol_version,
+        )
         return _tab_state
-    set_status(extension_enabled=None)
+    set_status(extension_enabled=None, extension_protocol=None)
     return None
 
 
-def _http_reply(status, body=b""):
+def _http_reply(status, body=b"", protocol_version=None):
     reasons = {
         200: "OK",
         204: "No Content",
@@ -165,14 +174,14 @@ def _http_reply(status, body=b""):
         f"Content-Length: {len(body)}",
     ]
     if 200 <= status < 300:
-        headers.append(f"X-Chunes-Protocol: {protocol.PROTOCOL_VERSION}")
+        headers.append(f"X-Chunes-Protocol: {protocol_version or protocol.PROTOCOL_VERSION}")
     if body:
         headers.append("Content-Type: application/json")
     return ("\r\n".join(headers) + "\r\n\r\n").encode("ascii") + body
 
 
 async def _handle_tab_report(reader, writer):
-    global _tab_reported_at
+    global _tab_reported_at, _tab_protocol_version
     reply = _http_reply(500)
     try:
         raw_head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
@@ -186,21 +195,23 @@ async def _handle_tab_report(reader, writer):
             body = await asyncio.wait_for(
                 reader.readexactly(request.content_length), 5
             )
-            report = protocol.parse_report_body(body)
+            report, report_version = protocol.parse_report_body(body, include_version=True)
             hosts = sorted({tab["host"] for tab in report["tabs"]})
             old_hosts = sorted({tab["host"] for tab in _tab_state["tabs"]})
             if (
                 not _tab_reported_at
                 or hosts != old_hosts
                 or report["enabled"] != _tab_state["enabled"]
+                or report_version != _tab_protocol_version
             ):
                 print(
                     f"Extension report: enabled={report['enabled']}, "
-                    f"audible hosts={hosts}"
+                    f"protocol={report_version}, audible hosts={hosts}"
                 )
             _tab_state.clear()
             _tab_state.update(report)
             _tab_reported_at = time.time()
+            _tab_protocol_version = report_version
             with _status_lock:
                 current_track = status.get("track")
                 current_host = status.get("host")
@@ -208,7 +219,7 @@ async def _handle_tab_report(reader, writer):
                 {"status": "ok", "track": current_track, "host": current_host},
                 separators=(",", ":"),
             ).encode()
-            reply = _http_reply(200, res_body)
+            reply = _http_reply(200, res_body, report_version)
     except protocol.ProtocolError as exc:
         reply = _http_reply(exc.status)
     except (
@@ -236,9 +247,14 @@ def fallback_track(report):
         host = tab["host"]
         t = tab["title"].strip()
         service = protocol.service_for_host(host)
-        if service == "soundcloud" and " by " in t:
-            title, artist = t.rsplit(" by ", 1)
-            return title.strip(), artist.strip(), host, tab["mediaId"]
+        if service == "soundcloud":
+            metadata = tab.get("metadata")
+            if metadata:
+                return metadata["title"], metadata["artist"], host, tab["mediaId"]
+            if " by " in t:
+                title, artist = t.rsplit(" by ", 1)
+                return title.strip(), artist.strip(), host, tab["mediaId"]
+            continue
         if service == "youtubeMusic":
             t = re.sub(r"\s*[\|-]\s*YouTube Music$", "", t, flags=re.IGNORECASE).strip()
             if normalize_title(t) in ("", "youtube music", "youtube"):
@@ -271,6 +287,23 @@ def fallback_timing(fb, seen, now):
     if 0 < elapsed < a_dur + 30:
         return (title, artist, elapsed, a_dur, f"tab:{host}")
     return None
+
+
+def provider_duration_start(title, artist, position, duration, seen, now):
+    """Keep a provider track anchored across stale backward media positions."""
+    previous = seen.get((title, artist))
+    if previous:
+        previous_start, _previous_duration = previous
+        elapsed = now - previous_start
+        if elapsed < duration + 30:
+            # Chromium periodically publishes a low, stale position for a
+            # background provider tab. Keeping the known anchor prevents the
+            # familiar 20s -> 5s Discord loop without affecting a new title.
+            if position <= 0 or position < elapsed - 5:
+                return previous_start
+    if 0 < position < duration:
+        return int(now - position)
+    return int(now)
 
 
 def normalize_title(t):
@@ -342,7 +375,19 @@ def resolve_tab(title, source, report):
     enabled = protocol.enabled_tabs(report)
     if len(enabled) == 1:
         return enabled[0]
-    return protocol.untitled_service_tab(report)
+    return None
+
+
+def protocol4_page_track(tab, report_version):
+    """Current page track for a v4 SoundCloud/YTM tab, when supplied."""
+    if report_version != protocol.PROTOCOL_VERSION or not tab:
+        return None
+    if protocol.service_for_host(tab["host"]) not in ("soundcloud", "youtubeMusic"):
+        return None
+    metadata = tab.get("metadata")
+    if not metadata:
+        return None
+    return metadata["title"], metadata["artist"]
 
 
 _UA = {
@@ -352,15 +397,6 @@ _UA = {
         "Chrome/138.0.0.0 Safari/537.36"
     )
 }
-_YOUTUBE_MUSIC_URL = "https://music.youtube.com/"
-_YOUTUBE_MUSIC_ART_HOSTS = {
-    "lh3.googleusercontent.com",
-    "yt3.ggpht.com",
-    "yt3.googleusercontent.com",
-    "i.ytimg.com",
-}
-_sc_client_id = None
-_ytm_client = None
 _artwork_cache = {}
 
 
@@ -371,6 +407,58 @@ def _http_get(url, headers=None):
     req = urllib.request.Request(url, headers=request_headers)
     with urllib.request.urlopen(req, timeout=10) as resp:
         return resp.read().decode("utf-8", errors="replace")
+
+
+_legacy_sc_client_id = None
+_legacy_ytm_client = None
+_YOUTUBE_MUSIC_URL = "https://music.youtube.com/"
+_YOUTUBE_MUSIC_ART_HOSTS = {
+    "lh3.googleusercontent.com",
+    "yt3.ggpht.com",
+    "yt3.googleusercontent.com",
+    "i.ytimg.com",
+}
+
+
+def _legacy_soundcloud_info(title, artist):
+    """Temporary protocol v3 artwork fallback while Store approval is pending.
+
+    Protocol v4 receives the playing page's artwork directly. Keep this legacy
+    path separate so it can be deleted with v3 support.
+    """
+    global _legacy_sc_client_id
+    try:
+        if not _legacy_sc_client_id:
+            html = _http_get("https://soundcloud.com/")
+            for match in re.finditer(r'src="(https://a-v2\.sndcdn\.com/assets/[^"]+\.js)"', html):
+                found = re.search(
+                    r'client_id\s*[:=]\s*"([A-Za-z0-9]{20,40})"',
+                    _http_get(match.group(1)),
+                )
+                if found:
+                    _legacy_sc_client_id = found.group(1)
+                    break
+        if not _legacy_sc_client_id:
+            return None, 0.0
+        query = urllib.parse.quote(f"{title} {artist}".strip())
+        data = json.loads(_http_get(
+            "https://api-v2.soundcloud.com/search/tracks"
+            f"?q={query}&client_id={_legacy_sc_client_id}&limit=5"
+        ))
+        fallback_art = None
+        for track in data.get("collection", []):
+            artwork = track.get("artwork_url") or track.get("user", {}).get("avatar_url")
+            if fallback_art is None and artwork:
+                fallback_art = artwork
+            if _titles_match(title, track.get("title") or ""):
+                return (
+                    artwork.replace("-large.", "-t500x500.") if artwork else None,
+                    (track.get("duration") or 0) / 1000.0,
+                )
+        return (fallback_art.replace("-large.", "-t500x500.") if fallback_art else None), 0.0
+    except Exception as exc:
+        print(f"Legacy SoundCloud artwork lookup failed: {type(exc).__name__}: {exc}")
+        return None, 0.0
 
 
 def _http_post_json(url, value, headers=None):
@@ -387,172 +475,84 @@ def _http_post_json(url, value, headers=None):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _soundcloud_client_id():
-    """SoundCloud's public web client_id, scraped from their app scripts."""
-    global _sc_client_id
-    if _sc_client_id:
-        return _sc_client_id
-    html = _http_get("https://soundcloud.com/")
-    for m in re.finditer(r'src="(https://a-v2\.sndcdn\.com/assets/[^"]+\.js)"', html):
-        js = _http_get(m.group(1))
-        found = re.search(r'client_id\s*[:=]\s*"([A-Za-z0-9]{20,40})"', js)
-        if found:
-            _sc_client_id = found.group(1)
-            return _sc_client_id
-    return None
-
-
-def _find_soundcloud_info(title, artist):
-    """Best-effort SoundCloud artwork and duration for the current title and artist."""
-    art = None
-    dur = 0.0
-    try:
-        cid = _soundcloud_client_id()
-        if cid:
-            q = urllib.parse.quote(f"{title} {artist}".strip())
-            data = json.loads(_http_get(
-                "https://api-v2.soundcloud.com/search/tracks"
-                f"?q={q}&client_id={cid}&limit=5"
-            ))
-            matched_art = None
-            matched_dur = 0.0
-            fallback_art = None
-            for t in data.get("collection", []):
-                cand = (t.get("artwork_url")
-                        or t.get("user", {}).get("avatar_url"))
-                cand_dur = (t.get("duration") or 0) / 1000.0
-                if _titles_match(title, t.get("title") or ""):
-                    if cand:
-                        matched_art = cand
-                    matched_dur = cand_dur
-                    break
-                if fallback_art is None and cand:
-                    fallback_art = cand
-            best_art = matched_art or fallback_art
-            if best_art:
-                art = best_art.replace("-large.", "-t500x500.")
-            # Duration only from a title-matched result; a fallback thumbnail is
-            # low harm, a wrong duration paints a wrong progress bar.
-            dur = matched_dur
-    except Exception as e:
-        print(f"SoundCloud artwork lookup failed: {type(e).__name__}: {e}")
-    return art, dur
-
-
-def _find_soundcloud_artwork(title, artist):
-    return _find_soundcloud_info(title, artist)[0]
-
-
-def _youtube_music_client():
-    """Return public YouTube Music web client values from its own page."""
-    global _ytm_client
-    if _ytm_client:
-        return _ytm_client
-    html = _http_get(_YOUTUBE_MUSIC_URL, {"Cookie": "SOCS=CAI"})
-    values = {}
-    for name in ("INNERTUBE_API_KEY", "INNERTUBE_CLIENT_VERSION", "VISITOR_DATA"):
-        found = re.search(rf'"{name}"\s*:\s*"([^"]+)"', html)
-        if found:
-            values[name] = found.group(1)
-    if "INNERTUBE_API_KEY" not in values or "INNERTUBE_CLIENT_VERSION" not in values:
-        return None
-    _ytm_client = values
-    return _ytm_client
-
-
-def _youtube_music_track(response, video_id):
-    try:
-        tabs = response["contents"]["singleColumnMusicWatchNextResultsRenderer"][
-            "tabbedRenderer"
-        ]["watchNextTabbedResultsRenderer"]["tabs"]
-        items = tabs[0]["tabRenderer"]["content"]["musicQueueRenderer"][
-            "content"
-        ]["playlistPanelRenderer"]["contents"]
-    except (KeyError, IndexError, TypeError):
-        return None
-
-    for item in items:
-        renderer = item.get("playlistPanelVideoRenderer")
-        wrapper = item.get("playlistPanelVideoWrapperRenderer")
-        if renderer is None and isinstance(wrapper, dict):
-            primary = wrapper.get("primaryRenderer", {})
-            renderer = primary.get("playlistPanelVideoRenderer")
-        if isinstance(renderer, dict) and renderer.get("videoId") == video_id:
-            return renderer
-    return None
-
-
-def _square_youtube_music_artwork(track):
-    thumbnails = track.get("thumbnail", {}).get("thumbnails", [])
-    square_candidates = []
-    any_candidates = []
-    for thumbnail in thumbnails:
-        url = thumbnail.get("url")
-        width = thumbnail.get("width")
-        height = thumbnail.get("height")
-        if (
-            not isinstance(url, str)
-            or type(width) is not int
-            or type(height) is not int
-            or width <= 0
-        ):
-            continue
-        parsed = urllib.parse.urlsplit(url)
-        if parsed.scheme == "https" and parsed.hostname in _YOUTUBE_MUSIC_ART_HOSTS:
-            clean_url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
-            if width == height:
-                square_candidates.append((width, clean_url))
-            else:
-                any_candidates.append((width, clean_url))
-                
-    if square_candidates:
-        return max(square_candidates)[1]
-    return max(any_candidates, default=(0, None))[1]
-
-
-def _find_youtube_music_artwork(video_id):
-    """Return exact square album artwork for a YouTube Music video ID."""
+def _legacy_youtube_music_artwork(video_id):
+    """Temporary exact v3 lookup while the Store update is pending."""
+    global _legacy_ytm_client
     if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id or ""):
         return None
     try:
-        client = _youtube_music_client()
-        if not client:
-            return None
+        if not _legacy_ytm_client:
+            html = _http_get(_YOUTUBE_MUSIC_URL, {"Cookie": "SOCS=CAI"})
+            values = {}
+            for name in ("INNERTUBE_API_KEY", "INNERTUBE_CLIENT_VERSION", "VISITOR_DATA"):
+                found = re.search(rf'"{name}"\s*:\s*"([^"]+)"', html)
+                if found:
+                    values[name] = found.group(1)
+            if "INNERTUBE_API_KEY" not in values or "INNERTUBE_CLIENT_VERSION" not in values:
+                return None
+            _legacy_ytm_client = values
         headers = {"Origin": _YOUTUBE_MUSIC_URL.rstrip("/")}
-        visitor = client.get("VISITOR_DATA")
-        if visitor:
-            headers["X-Goog-Visitor-Id"] = visitor
-        body = {
-            "context": {
-                "client": {
-                    "clientName": "WEB_REMIX",
-                    "clientVersion": client["INNERTUBE_CLIENT_VERSION"],
-                },
-                "user": {},
-            },
-            "enablePersistentPlaylistPanel": True,
-            "isAudioOnly": True,
-            "playlistId": f"RDAMVM{video_id}",
-            "tunerSettingValue": "AUTOMIX_SETTING_NORMAL",
-            "videoId": video_id,
-            "watchEndpointMusicSupportedConfigs": {
-                "watchEndpointMusicConfig": {
-                    "hasPersistentPlaylistPanel": True,
-                    "musicVideoType": "MUSIC_VIDEO_TYPE_ATV",
-                }
-            },
-        }
-        api_key = urllib.parse.quote(client["INNERTUBE_API_KEY"], safe="")
+        if _legacy_ytm_client.get("VISITOR_DATA"):
+            headers["X-Goog-Visitor-Id"] = _legacy_ytm_client["VISITOR_DATA"]
         response = _http_post_json(
-            f"{_YOUTUBE_MUSIC_URL}youtubei/v1/next?alt=json&key={api_key}",
-            body,
+            f"{_YOUTUBE_MUSIC_URL}youtubei/v1/next?alt=json&key="
+            f"{urllib.parse.quote(_legacy_ytm_client['INNERTUBE_API_KEY'], safe='')}",
+            {
+                "context": {"client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": _legacy_ytm_client["INNERTUBE_CLIENT_VERSION"],
+                }, "user": {}},
+                "enablePersistentPlaylistPanel": True,
+                "isAudioOnly": True,
+                "playlistId": f"RDAMVM{video_id}",
+                "tunerSettingValue": "AUTOMIX_SETTING_NORMAL",
+                "videoId": video_id,
+                "watchEndpointMusicSupportedConfigs": {
+                    "watchEndpointMusicConfig": {
+                        "hasPersistentPlaylistPanel": True,
+                        "musicVideoType": "MUSIC_VIDEO_TYPE_ATV",
+                    }
+                },
+            },
             headers,
         )
-        track = _youtube_music_track(response, video_id)
-        return _square_youtube_music_artwork(track) if track else None
-    except Exception as e:
-        print(f"YouTube Music artwork lookup failed: {type(e).__name__}: {e}")
-        return None
+        items = response["contents"]["singleColumnMusicWatchNextResultsRenderer"][
+            "tabbedRenderer"
+        ]["watchNextTabbedResultsRenderer"]["tabs"][0]["tabRenderer"]["content"][
+            "musicQueueRenderer"
+        ]["content"]["playlistPanelRenderer"]["contents"]
+        for item in items:
+            renderer = item.get("playlistPanelVideoRenderer")
+            wrapper = item.get("playlistPanelVideoWrapperRenderer")
+            if renderer is None and isinstance(wrapper, dict):
+                renderer = wrapper.get("primaryRenderer", {}).get(
+                    "playlistPanelVideoRenderer"
+                )
+            if isinstance(renderer, dict) and renderer.get("videoId") == video_id:
+                thumbnails = renderer.get("thumbnail", {}).get("thumbnails", [])
+                valid = []
+                for thumbnail in thumbnails:
+                    url = thumbnail.get("url")
+                    width = thumbnail.get("width")
+                    height = thumbnail.get("height")
+                    parsed = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+                    if (
+                        parsed
+                        and parsed.scheme == "https"
+                        and parsed.hostname in _YOUTUBE_MUSIC_ART_HOSTS
+                        and type(width) is int
+                        and type(height) is int
+                        and width > 0
+                    ):
+                        clean = urllib.parse.urlunsplit(
+                            (parsed.scheme, parsed.netloc, parsed.path, "", "")
+                        )
+                        valid.append((width == height, width, clean))
+                squares = [candidate for candidate in valid if candidate[0]]
+                return max(squares or valid, default=(False, 0, None))[2]
+    except Exception as exc:
+        print(f"Legacy YouTube Music artwork lookup failed: {type(exc).__name__}: {exc}")
+    return None
 
 
 def _find_apple_music_info(title, artist):
@@ -593,9 +593,11 @@ def _find_apple_music_artwork(title, artist):
     return _find_apple_music_info(title, artist)[0]
 
 
-def find_artwork_and_info(title, artist, host=None, media_id=None, source=None):
-    """Return (art_url, duration_s) for the track with cross-provider fallbacks."""
-    key = (host, media_id, source, title, artist)
+def find_artwork_and_info(
+    title, artist, host=None, media_id=None, source=None, metadata=None, legacy=False
+):
+    """Return (art_url, duration_s) from trusted page metadata or Apple Search."""
+    key = (host, media_id, source, title, artist, str(metadata), legacy)
     if key in _artwork_cache:
         return _artwork_cache[key]
 
@@ -603,21 +605,18 @@ def find_artwork_and_info(title, artist, host=None, media_id=None, source=None):
     art = None
     dur = 0.0
 
-    if service == "youtubeMusic":
-        if media_id:
-            art = _find_youtube_music_artwork(media_id)
+    if metadata:
+        art = metadata["artwork"]
+    elif legacy and service == "soundcloud":
+        art, dur = _legacy_soundcloud_info(title, artist)
+    elif legacy and service == "youtubeMusic":
+        art = _legacy_youtube_music_artwork(media_id)
         if not art:
             art, dur = _find_apple_music_info(title, artist)
-            if not art:
-                art, dur = _find_soundcloud_info(title, artist)
     elif service == "appleMusic":
         art, dur = _find_apple_music_info(title, artist)
-        if not art:
-            art, dur = _find_soundcloud_info(title, artist)
-    elif service == "soundcloud" or not protocol.is_browser_source(source):
-        art, dur = _find_soundcloud_info(title, artist)
-        if not art:
-            art, dur = _find_apple_music_info(title, artist)
+    elif not protocol.is_browser_source(source):
+        art, dur = _find_apple_music_info(title, artist)
 
     res = (art, dur)
     _artwork_cache[key] = res
@@ -626,9 +625,9 @@ def find_artwork_and_info(title, artist, host=None, media_id=None, source=None):
     return res
 
 
-def find_artwork(title, artist, host=None, media_id=None, source=None):
+def find_artwork(title, artist, host=None, media_id=None, source=None, metadata=None, legacy=False):
     """Return source-specific online album artwork for the current track."""
-    art, _ = find_artwork_and_info(title, artist, host, media_id, source)
+    art, _ = find_artwork_and_info(title, artist, host, media_id, source, metadata, legacy)
     return art
 
 
@@ -826,31 +825,61 @@ async def main():
 
         host = None
         media_id = None
+        tab = None
+        page_metadata = None
+        legacy_artwork = report is not None and _tab_protocol_version == protocol.LEGACY_PROTOCOL_VERSION
         if track:
             title, artist, pos, dur, source = track
-            if normalize_title(title) in ("youtube music", "soundcloud", "apple music", "youtube"):
+            generic_title = normalize_title(title) in (
+                "youtube music", "soundcloud", "apple music", "youtube"
+            )
+            tab = resolve_tab(title, source, report)
+            if tab:
+                host = tab["host"]
+                media_id = tab["mediaId"]
+                page_metadata = tab.get("metadata")
+                # A v4 SoundCloud/YTM page sample is the player itself. It
+                # must replace stale Windows metadata at a track transition;
+                # otherwise the old title is paired with the next track's
+                # in-page position and Discord starts in the middle.
+                page_track = protocol4_page_track(tab, _tab_protocol_version)
+                if page_track:
+                    title, artist = page_track
+                    generic_title = False
+                # Protocol 3 and Apple retain their conservative metadata
+                # attribution until Windows identifies the same track.
+                elif page_metadata and (
+                    generic_title or _titles_match(title, page_metadata["title"])
+                ):
+                    title = page_metadata["title"]
+                    artist = page_metadata["artist"]
+                    generic_title = False
+            if generic_title:
                 track = None
-            else:
-                tab = resolve_tab(title, source, report)
-                if tab:
-                    host = tab["host"]
-                    media_id = tab["mediaId"]
-                if host is None and last is not None and last[0][0] == title and last[0][1] == artist:
-                    host = last[0][2]
-                    media_id = last[0][3]
-                if not protocol.browser_track_is_allowed(source, report, host):
-                    if last is not None:
-                        print(
-                            "Ignoring disabled or non-music browser source: "
-                            f"{title[:60]}"
-                        )
-                    track = None
+            if host is None and last is not None and last[0][0] == title and last[0][1] == artist:
+                host = last[0][2]
+                media_id = last[0][3]
+            if track and not protocol.browser_track_is_allowed(source, report, host):
+                if last is not None:
+                    print(
+                        "Ignoring disabled or non-music browser source: "
+                        f"{title[:60]}"
+                    )
+                track = None
         if not track:
             # A blocked video may be hogging the browser's only media
             # session; the extension still knows if a music tab is audible.
             fb = fallback_track(report)
             if fb:
                 title, artist, host, media_id = fb
+                for reported_tab in protocol.enabled_tabs(report):
+                    if (
+                        reported_tab["host"] == host
+                        and reported_tab.get("metadata", {}).get("title") == title
+                        and reported_tab.get("metadata", {}).get("artist") == artist
+                    ):
+                        page_metadata = reported_tab["metadata"]
+                        break
                 track = fallback_timing(fb, seen, time.time())
                 if track:
                     title, artist, pos, dur, source = track
@@ -892,7 +921,11 @@ async def main():
                             prev = (prev_start, apple_durs.get(last_apple_key, 0.0))
                     start = apple_track_start((title, artist), now, apple_starts, prev)
             else:
-                start = int(now - pos)
+                start = (
+                    provider_duration_start(title, artist, pos, dur, seen, now)
+                    if dur > 0
+                    else int(now - pos)
+                )
             last_apple_key = (title, artist) if is_apple else None
             if start > 0:
                 seen[(title, artist)] = (start, dur)
@@ -920,11 +953,17 @@ async def main():
                     )
                 art = None
                 info_dur = 0.0
-                art, info_dur = await asyncio.to_thread(
-                    find_artwork_and_info, title, artist, host, media_id, source
-                )
-                if not use_artwork:
-                    art = None
+                if use_artwork:
+                    art, info_dur = await asyncio.to_thread(
+                        find_artwork_and_info,
+                        title,
+                        artist,
+                        host,
+                        media_id,
+                        source,
+                        page_metadata,
+                        legacy_artwork,
+                    )
                 if is_apple:
                     if ext_timing is not None and ext_timing[1] > 0:
                         # MusicKit reports the track's real duration directly.
@@ -938,7 +977,12 @@ async def main():
                         )
                 elif dur <= 0 and info_dur > 0:
                     dur = info_dur
-                    start = int(now - pos) if 0 < pos < dur else int(now)
+                    # A background browser tab can expose a real track but
+                    # only a zero position. Keep its first provider-backed
+                    # anchor instead of resetting Discord to 0:00 each poll.
+                    start = provider_duration_start(
+                        title, artist, pos, dur, seen, now
+                    )
                 kwargs = dict(
                     activity_type=ActivityType.LISTENING,
                     details=title[:128],

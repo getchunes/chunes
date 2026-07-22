@@ -18,6 +18,7 @@ import pystray
 import presence
 import settings
 from updater import UpdateController
+from version import __version__
 
 APP_NAME = "Chunes"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -214,6 +215,10 @@ def extension_state_text(item=None):
     return f"Chune ID: {'on' if enabled else 'off'}"
 
 
+def version_text(item=None):
+    return f"Chunes v{__version__}"
+
+
 def open_log(icon, item):
     os.startfile(LOG_PATH)
 
@@ -293,7 +298,9 @@ def run_engine():
         except (Exception, SystemExit) as e:
             print(f"Engine stopped ({type(e).__name__}: {e}), restarting in 30s")
         finally:
-            presence.set_status(track=None, extension_enabled=None)
+            presence.set_status(
+                track=None, extension_enabled=None, extension_protocol=None
+            )
         time.sleep(30)
 
 
@@ -325,6 +332,7 @@ def main():
         menu=pystray.Menu(
             pystray.MenuItem(current_track_text, None, enabled=False),
             pystray.MenuItem(extension_state_text, None, enabled=False),
+            pystray.MenuItem(version_text, None, enabled=False),
             pystray.MenuItem("Start with Windows", toggle_autostart,
                              checked=lambda item: autostart_enabled()),
             pystray.Menu.SEPARATOR,

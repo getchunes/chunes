@@ -14,7 +14,8 @@ playback pauses, and labels both supported services correctly.
 - the Discord desktop app running on the same PC
 - the [Chune ID browser extension](https://chromewebstore.google.com/detail/chune-id/ofbfkbhgfhoapckgjcpmcohbhnogpfjd)
   for accurate browser service, pause, and enable/disable filtering. This
-  Chunes release speaks protocol 3 and requires Chune ID 1.0.6 or newer;
+   Chunes release accepts protocol 3 while the Chune ID protocol 4 Store update
+   is pending;
   the [extension source is on GitHub](https://github.com/getchunes/chunes-extension)
 
 ## Install
@@ -78,13 +79,15 @@ the exact media type `application/json`:
 {
   "enabled": true,
   "services": {
+    "appleMusic": true,
     "soundcloud": true,
     "youtubeMusic": true
   },
   "tabs": [
     {"host": "soundcloud.com", "mediaId": null, "title": "Track by Artist"},
     {"host": "music.youtube.com", "mediaId": "a1B2c3D4e5F", "title": "Track - Artist"}
-  ]
+  ],
+  "protocol": 4
 }
 ```
 
@@ -95,12 +98,12 @@ report expires after 90 seconds. The tray displays **Chune ID: on**, **off**, or
 **not connected** so the extension master state is visible without duplicating
 its control in the app.
 
-Every successful desktop response includes `X-Chunes-Protocol: 3`. Chune ID
-must require that header before accepting a `200` or `204` response, so an old
-desktop listener cannot be mistaken for protocol v3. Protocol 3 adds optional,
-bounds-checked Apple Music timing fields and ships as a coordinated upgrade:
-this Chunes release supports Chune ID 1.0.6 or newer, and older builds that
-still expect protocol 2 are treated as an incompatible desktop version.
+Protocol 4 reports carry optional, bounds-checked page Media Session metadata
+and use `"protocol": 4`. Chunes also accepts the unmarked protocol 3 report
+while the Chrome Web Store review is pending and responds with the matching
+`X-Chunes-Protocol` header. The extension retries the exact protocol 3 shape
+when an older desktop rejects protocol 4; this compatibility path is logged in
+the extension service-worker console.
 
 Without Chune ID, Chunes can still use Windows media metadata, but it cannot
 reliably distinguish supported music from unrelated browser playback or retain
@@ -114,8 +117,8 @@ the correct service when another tab owns the browser media session.
   unrelated same-named registry values untouched.
 - **Automatically check for updates** persists the startup update preference.
 - **Check for updates now** performs an immediate manual check.
-- **Look up online album art** persists whether Chunes may search SoundCloud or,
-  for an identified YouTube Music track, request its exact square music artwork.
+- **Look up online album art** controls whether Chunes uses the provider artwork
+  URL supplied locally by Chune ID or performs a permitted legacy lookup.
 - **Open log** opens `%LOCALAPPDATA%\Chunes\chunes.log`.
 - **Quit** clears the process from the notification area and stops Chunes.
 

@@ -79,6 +79,23 @@ class PackagingTests(unittest.TestCase):
         self.assertGreaterEqual(len(remove_folders), 2)
         self.assertTrue(all(item.attrib["On"] == "uninstall" for item in remove_folders))
 
+    def test_installer_brands_ui_and_sets_publisher_url(self):
+        publisher = self.product.find("w:Property[@Id='ARPPUBLISHER']", WIX_NS)
+        self.assertEqual(publisher.attrib["Value"], "https://github.com/getchunes")
+        variables = {
+            item.attrib["Id"]: item.attrib["Value"]
+            for item in self.product.findall("w:WixVariable", WIX_NS)
+        }
+        self.assertEqual(
+            variables["WixUIDialogBmp"],
+            "$(var.ProjectDir)\\installer\\assets\\chunes-dialog.bmp",
+        )
+        bitmap = self.product.find("w:Binary[@Id='ChunesExitDialogBitmap']", WIX_NS)
+        self.assertEqual(
+            bitmap.attrib["SourceFile"],
+            "$(var.ProjectDir)\\installer\\assets\\chunes-exit-dialog.bmp",
+        )
+
     def test_first_install_privacy_checkboxes_and_opt_outs_are_authored(self):
         settings = (
             (
@@ -139,14 +156,20 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('"Look up online album art"', tray_source)
         privacy = (ROOT / "PRIVACY.md").read_text(encoding="utf-8")
         self.assertIn("## Online album artwork", privacy)
-        self.assertIn("SoundCloud's public website", privacy)
-        self.assertIn("YouTube Music's public", privacy)
+        self.assertIn("protocol 4 SoundCloud", privacy)
+        self.assertIn("protocol 3 Chune ID", privacy)
         self.assertIn("https://soundcloud.com/pages/privacy", privacy)
         self.assertIn("https://policies.google.com/privacy", privacy)
         self.assertIn("itunes.apple.com/search", privacy)
         self.assertIn("https://www.apple.com/legal/privacy/", privacy)
 
     def test_success_exit_launch_is_default_checked_and_install_only(self):
+        extension_text = self.product.find(
+            ".//w:Control[@Id='ExtensionText']", WIX_NS
+        )
+        extension_link = self.product.find(
+            ".//w:Control[@Id='ExtensionLink']", WIX_NS
+        )
         label = self.product.find(
             "w:Property[@Id='WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT']", WIX_NS
         )
@@ -158,6 +181,13 @@ class PackagingTests(unittest.TestCase):
         )
         action = self.product.find("w:CustomAction[@Id='LaunchChunes']", WIX_NS)
 
+        self.assertEqual(extension_link.attrib["Type"], "Hyperlink")
+        self.assertIn("required browser companion", extension_text.attrib["Text"])
+        self.assertIn(
+            "https://chromewebstore.google.com/detail/chune-id/"
+            "ofbfkbhgfhoapckgjcpmcohbhnogpfjd",
+            extension_link.attrib["Text"],
+        )
         self.assertEqual(label.attrib["Value"], "Launch Chunes when setup finishes")
         self.assertEqual(checked.attrib["Value"], "1")
         self.assertEqual(target.attrib["Value"], "[#ChunesExe]")
@@ -170,7 +200,7 @@ class PackagingTests(unittest.TestCase):
         finish_events = [
             item
             for item in self.product.findall(".//w:Publish", WIX_NS)
-            if item.attrib.get("Dialog") == "ExitDialog"
+            if item.attrib.get("Dialog") == "ChuneIdExitDialog"
             and item.attrib.get("Control") == "Finish"
         ]
         launch = next(
