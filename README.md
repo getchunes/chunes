@@ -15,6 +15,23 @@ playback pauses, and labels both supported services correctly.
 
 ## Install
 
+### Winget
+
+```powershell
+winget install chunes
+```
+
+Winget downloads `Chunes-<version>-x64.msi` from the immutable GitHub release
+and verifies it against the SHA-256 pinned in the
+[community manifest](https://github.com/microsoft/winget-pkgs/tree/master/manifests/g/getchunes/Chunes)
+before running a silent per-user install. A silent install applies the default
+settings: automatic update checks and online album art are both on. Either can
+be turned off afterwards from the tray menu, and the
+[privacy policy](PRIVACY.md) describes both network features. Upgrade later
+with `winget upgrade chunes`.
+
+### Manual MSI
+
 1. Download `Chunes-<version>-x64.msi` from the
    [latest release](https://github.com/getchunes/chunes/releases/latest).
 2. Check the release-specific trust information below before running the MSI.
