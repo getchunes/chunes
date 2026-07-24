@@ -298,9 +298,7 @@ def run_engine():
         except (Exception, SystemExit) as e:
             print(f"Engine stopped ({type(e).__name__}: {e}), restarting in 30s")
         finally:
-            presence.set_status(
-                track=None, extension_enabled=None, extension_protocol=None
-            )
+            presence.set_status(track=None, extension_enabled=None)
         time.sleep(30)
 
 

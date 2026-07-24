@@ -82,14 +82,10 @@ class AutostartTests(unittest.TestCase):
 
 class TrayStatusTests(unittest.TestCase):
     def tearDown(self):
-        chunes.presence.set_status(
-            track=None, extension_enabled=None, extension_protocol=None
-        )
+        chunes.presence.set_status(track=None, extension_enabled=None)
 
     def test_dynamic_menu_text_reflects_presence_snapshot(self):
-        chunes.presence.set_status(
-            track="Song - Artist", extension_enabled=True, extension_protocol=4
-        )
+        chunes.presence.set_status(track="Song - Artist", extension_enabled=True)
         self.assertEqual(chunes.current_track_text(), "Song - Artist")
         self.assertEqual(chunes.extension_state_text(), "Chune ID: on")
         self.assertEqual(chunes.version_text(), "Chunes v1.0.11")
@@ -98,13 +94,13 @@ class TrayStatusTests(unittest.TestCase):
         self.assertEqual(chunes.current_track_text(), "Nothing playing")
         self.assertEqual(chunes.extension_state_text(), "Chune ID: off")
 
-        chunes.presence.set_status(extension_enabled=None, extension_protocol=None)
+        chunes.presence.set_status(extension_enabled=None)
         self.assertEqual(chunes.extension_state_text(), "Chune ID: not connected")
         self.assertEqual(chunes.version_text(), "Chunes v1.0.11")
 
     def test_status_change_refreshes_the_native_menu(self):
-        old = {"track": None, "extension_enabled": None, "extension_protocol": None}
-        new = {"track": "Song", "extension_enabled": True, "extension_protocol": 4}
+        old = {"track": None, "extension_enabled": None}
+        new = {"track": "Song", "extension_enabled": True}
         stop = mock.Mock()
         stop.wait.side_effect = [False, True]
         icon = mock.Mock()

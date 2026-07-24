@@ -22,7 +22,6 @@ PROTOCOL_VERSION = 4
 
 REPORT_KEYS = {"enabled", "services", "tabs"}
 PROTOCOL_KEY = "protocol"
-LEGACY_PROTOCOL_VERSION = 3
 TAB_KEYS = {"host", "mediaId", "title"}
 # Page-level playback timing measured by the extension (MusicKit). Only the
 # Apple Music web player needs it: its OS media session misreports position
@@ -92,7 +91,7 @@ def _validate_playback_number(value, maximum):
     return number
 
 
-def _validate_tab_playback(tab, host, version):
+def _validate_tab_playback(tab, host):
     """Validated page playback fields for the Apple Music player."""
     present = set(tab) & PLAYBACK_KEYS
     if not present:
@@ -172,20 +171,11 @@ def _validate_page_metadata(tab, host):
     }
 
 
-def validate_report(value, include_version=False):
-    """Return a detached legacy v3 or explicit v4 report.
-
-    Compatibility is intentionally localized here: v3 has the historical
-    exact shape, while v4 adds an explicit marker before it may carry page
-    metadata. Remove the v3 branch when its supported-release window ends.
-    """
+def validate_report(value):
+    """Return a detached report after validating the exact v4 schema."""
     if not isinstance(value, dict):
         raise ProtocolError(400, "Invalid report object")
-    if set(value) == REPORT_KEYS:
-        version = LEGACY_PROTOCOL_VERSION
-    elif set(value) == REPORT_KEYS | {PROTOCOL_KEY} and value[PROTOCOL_KEY] == PROTOCOL_VERSION:
-        version = PROTOCOL_VERSION
-    else:
+    if set(value) != REPORT_KEYS | {PROTOCOL_KEY} or value[PROTOCOL_KEY] != PROTOCOL_VERSION:
         raise ProtocolError(400, "Invalid report object")
     if type(value["enabled"]) is not bool:
         raise ProtocolError(400, "Invalid enabled value")
@@ -201,8 +191,8 @@ def validate_report(value, include_version=False):
         raise ProtocolError(400, "Invalid tabs value")
 
     clean_tabs = []
+    optional_keys = PLAYBACK_KEYS | {PAGE_METADATA_KEY}
     for tab in tabs:
-        optional_keys = PLAYBACK_KEYS | ({PAGE_METADATA_KEY} if version == PROTOCOL_VERSION else set())
         if not isinstance(tab, dict) or not TAB_KEYS <= set(tab) <= TAB_KEYS | optional_keys:
             raise ProtocolError(400, "Invalid tab object")
         host = tab["host"]
@@ -225,12 +215,11 @@ def validate_report(value, include_version=False):
         elif media_id is not None:
             raise ProtocolError(400, "Unexpected tab media ID")
         clean_tab = {"host": host, "mediaId": media_id, "title": title}
-        clean_tab.update(_validate_tab_playback(tab, host, version))
-        if version == PROTOCOL_VERSION:
-            clean_tab.update(_validate_page_metadata(tab, host))
+        clean_tab.update(_validate_tab_playback(tab, host))
+        clean_tab.update(_validate_page_metadata(tab, host))
         clean_tabs.append(clean_tab)
 
-    report = {
+    return {
         "enabled": value["enabled"],
         "services": {
             "appleMusic": services["appleMusic"],
@@ -239,10 +228,9 @@ def validate_report(value, include_version=False):
         },
         "tabs": clean_tabs,
     }
-    return (report, version) if include_version else report
 
 
-def parse_report_body(body, include_version=False):
+def parse_report_body(body):
     if not body or len(body) > MAX_BODY_BYTES:
         raise ProtocolError(400, "Invalid body size")
     try:
@@ -253,7 +241,7 @@ def parse_report_body(body, include_version=False):
         )
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProtocolError(400, "Invalid JSON") from exc
-    return validate_report(value, include_version)
+    return validate_report(value)
 
 
 def parse_request_head(raw_head):
