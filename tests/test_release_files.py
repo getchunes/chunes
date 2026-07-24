@@ -156,12 +156,12 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('"Look up online album art"', tray_source)
         privacy = (ROOT / "PRIVACY.md").read_text(encoding="utf-8")
         self.assertIn("## Online album artwork", privacy)
-        self.assertIn("protocol 4 SoundCloud", privacy)
-        self.assertIn("protocol 3 Chune ID", privacy)
-        self.assertIn("https://soundcloud.com/pages/privacy", privacy)
-        self.assertIn("https://policies.google.com/privacy", privacy)
+        self.assertIn("provider-hosted artwork URL sent locally by Chune ID", privacy)
         self.assertIn("itunes.apple.com/search", privacy)
         self.assertIn("https://www.apple.com/legal/privacy/", privacy)
+        # The provider lookups those policies covered are gone with protocol 3.
+        self.assertNotIn("https://soundcloud.com/pages/privacy", privacy)
+        self.assertNotIn("https://policies.google.com/privacy", privacy)
 
     def test_success_exit_launch_is_default_checked_and_install_only(self):
         extension_text = self.product.find(

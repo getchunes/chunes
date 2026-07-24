@@ -14,8 +14,7 @@ playback pauses, and labels both supported services correctly.
 - the Discord desktop app running on the same PC
 - the [Chune ID browser extension](https://chromewebstore.google.com/detail/chune-id/ofbfkbhgfhoapckgjcpmcohbhnogpfjd)
   for accurate browser service, pause, and enable/disable filtering. This
-   Chunes release accepts protocol 3 while the Chune ID protocol 4 Store update
-   is pending;
+  Chunes release requires protocol 4, which Chune ID 1.0.10 and later send;
   the [extension source is on GitHub](https://github.com/getchunes/chunes-extension)
 
 ## Install
@@ -98,12 +97,15 @@ report expires after 90 seconds. The tray displays **Chune ID: on**, **off**, or
 **not connected** so the extension master state is visible without duplicating
 its control in the app.
 
-Protocol 4 reports carry optional, bounds-checked page Media Session metadata
-and use `"protocol": 4`. Chunes also accepts the unmarked protocol 3 report
-while the Chrome Web Store review is pending and responds with the matching
-`X-Chunes-Protocol` header. The extension retries the exact protocol 3 shape
-when an older desktop rejects protocol 4; this compatibility path is logged in
-the extension service-worker console.
+Reports carry `"protocol": 4` and optional, bounds-checked page Media Session
+metadata, and Chunes answers with the matching `X-Chunes-Protocol` header.
+Earlier protocol versions are no longer accepted.
+
+A tab that reports its own metadata names the track it is playing, so it stays
+identified even while another tab makes noise. Starting a regular YouTube video
+during a song therefore no longer clears the status. A title that names no
+reporting tab is still left unattributed whenever unrelated browser audio could
+be the one the Windows media session is describing.
 
 Without Chune ID, Chunes can still use Windows media metadata, but it cannot
 reliably distinguish supported music from unrelated browser playback or retain
@@ -118,7 +120,8 @@ the correct service when another tab owns the browser media session.
 - **Automatically check for updates** persists the startup update preference.
 - **Check for updates now** performs an immediate manual check.
 - **Look up online album art** controls whether Chunes uses the provider artwork
-  URL supplied locally by Chune ID or performs a permitted legacy lookup.
+  URL supplied locally by Chune ID or looks the cover up on the public Apple
+  Search API.
 - **Open log** opens `%LOCALAPPDATA%\Chunes\chunes.log`.
 - **Quit** clears the process from the notification area and stops Chunes.
 

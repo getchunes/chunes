@@ -6,6 +6,7 @@ import protocol
 
 
 VALID_REPORT = {
+    "protocol": 4,
     "enabled": True,
     "services": {"appleMusic": True, "soundcloud": True, "youtubeMusic": True},
     "tabs": [
@@ -17,6 +18,9 @@ VALID_REPORT = {
         },
     ],
 }
+
+# The validated report drops the protocol marker itself.
+VALIDATED_REPORT = {key: value for key, value in VALID_REPORT.items() if key != "protocol"}
 
 # Apple Music's web player keeps the page name while playing, so its tab
 # titles never contain the playing track.
@@ -35,35 +39,31 @@ class ReportValidationTests(unittest.TestCase):
         value["services"]["soundcloud"] = False
         value["tabs"][0]["title"] = "Changed"
 
-        self.assertEqual(report, VALID_REPORT)
+        self.assertEqual(report, VALIDATED_REPORT)
 
-    def test_accepts_explicit_v4_page_metadata(self):
+    def test_accepts_page_metadata(self):
         value = copy.deepcopy(VALID_REPORT)
-        value["protocol"] = 4
         value["tabs"][0]["metadata"] = {
             "title": "Song",
             "artist": "Artist",
             "artwork": "https://i1.sndcdn.com/artwork.jpg",
         }
 
-        report, version = protocol.validate_report(value, include_version=True)
+        report = protocol.validate_report(value)
 
-        self.assertEqual(version, 4)
         self.assertEqual(report["tabs"][0]["metadata"], value["tabs"][0]["metadata"])
 
-    def test_v3_rejects_page_metadata_and_v4_requires_marker(self):
-        value = copy.deepcopy(VALID_REPORT)
-        value["tabs"][0]["metadata"] = {
-            "title": "Song",
-            "artist": "Artist",
-            "artwork": None,
-        }
-        with self.assertRaises(protocol.ProtocolError):
-            protocol.validate_report(value)
+    def test_requires_the_current_protocol_marker(self):
+        # Superseded protocol 3 sent no marker at all.
+        unmarked = copy.deepcopy(VALID_REPORT)
+        del unmarked["protocol"]
+        superseded = dict(copy.deepcopy(VALID_REPORT), protocol=3)
 
-        value["protocol"] = 3
-        with self.assertRaises(protocol.ProtocolError):
-            protocol.validate_report(value)
+        for value in (unmarked, superseded):
+            with self.subTest(value=value):
+                with self.assertRaises(protocol.ProtocolError) as raised:
+                    protocol.validate_report(value)
+                self.assertEqual(raised.exception.status, 400)
 
     def test_rejects_non_exact_payloads(self):
         invalid = []
@@ -162,7 +162,7 @@ class ReportValidationTests(unittest.TestCase):
 
     def test_parses_valid_utf8_json(self):
         body = json.dumps(VALID_REPORT, ensure_ascii=False).encode("utf-8")
-        self.assertEqual(protocol.parse_report_body(body), VALID_REPORT)
+        self.assertEqual(protocol.parse_report_body(body), VALIDATED_REPORT)
 
     def test_accepts_apple_music_tabs_without_playback(self):
         value = copy.deepcopy(VALID_REPORT)

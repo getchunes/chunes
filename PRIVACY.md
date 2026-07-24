@@ -62,32 +62,20 @@ quit Chunes from its tray menu and turn off **Start with Windows** if enabled.
 When **Look up online album art** is checked, Chunes uses the identified service
 to find artwork:
 
-- For protocol 4 SoundCloud, YouTube Music, and Apple Music tabs, Chunes uses
-  the current page's provider-hosted artwork URL sent locally by Chune ID. It
-  makes no provider lookup.
-- For protocol 3 Chune ID while its Chrome Web Store update is pending, Chunes
-  retains the previous SoundCloud and YouTube Music artwork fallback. SoundCloud
-  receives a title/artist search; YouTube Music uses its public video thumbnail.
-- For Apple Music without a fresh MusicKit artwork URL, Chunes may send the
-  current track title and artist to Apple's public iTunes Search API
+- For SoundCloud, YouTube Music, and Apple Music tabs, Chunes uses the current
+  page's provider-hosted artwork URL sent locally by Chune ID. It makes no
+  provider lookup.
+- For Apple Music without a fresh MusicKit artwork URL, and for media played by
+  a desktop application rather than a browser, Chunes may send the current track
+  title and artist to Apple's public iTunes Search API
   (itunes.apple.com/search, keyless).
 
-These requests necessarily expose the user's IP address and a generic desktop
-browser user-agent to the selected service and its infrastructure. YouTube
-Music may also issue a transient visitor value used for its public web request;
-Chunes does not send account cookies or credentials. When a result is found,
-Chunes gives Discord the resulting provider-hosted artwork URL; Discord may then
-retrieve that image.
+This request necessarily exposes the user's IP address and a generic desktop
+browser user-agent to Apple and its infrastructure. Chunes does not send account
+cookies or credentials. When a result is found, Chunes gives Discord the
+resulting provider-hosted artwork URL; Discord may then retrieve that image.
 
-SoundCloud's privacy policy applies:
-
-https://soundcloud.com/pages/privacy
-
-Google's privacy policy applies to YouTube Music:
-
-https://policies.google.com/privacy
-
-Apple's privacy policy applies to Apple Music artwork lookups:
+Apple's privacy policy applies to artwork lookups:
 
 https://www.apple.com/legal/privacy/
 
@@ -122,8 +110,7 @@ again and cancels the pending request before contacting GitHub.
 ## No Chunes service
 
 The Chunes project does not receive the media metadata, extension reports,
-settings, logs, SoundCloud searches, YouTube Music artwork requests, or Discord
-presence described above.
+settings, logs, artwork searches, or Discord presence described above.
 Chunes does not sell or share personal data with a Chunes-operated service
 because no such service is used by the application.
 

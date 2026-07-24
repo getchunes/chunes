@@ -56,7 +56,7 @@ class FakeWriter:
 
 
 def tab_report_request(report):
-    body = json.dumps(report).encode()
+    body = json.dumps({"protocol": 4, **report}).encode()
     head = (
         "POST /tabs HTTP/1.1\r\n"
         "Host: 127.0.0.1:52846\r\n"
@@ -153,14 +153,12 @@ class DiscordFrameTests(unittest.TestCase):
 
 
 class DesktopProtocolTests(unittest.TestCase):
-    def test_success_responses_advertise_requested_protocol(self):
+    def test_success_responses_advertise_the_current_protocol(self):
+        version = presence.protocol.PROTOCOL_VERSION
         for status in (200, 204):
-            for version in (3, 4):
-                with self.subTest(status=status, version=version):
-                    reply = presence._http_reply(
-                        status, b"{}" if status == 200 else b"", version
-                    )
-                    self.assertIn(f"X-Chunes-Protocol: {version}\r\n".encode(), reply)
+            with self.subTest(status=status):
+                reply = presence._http_reply(status, b"{}" if status == 200 else b"")
+                self.assertIn(f"X-Chunes-Protocol: {version}\r\n".encode(), reply)
         self.assertNotIn(b"X-Chunes-Protocol", presence._http_reply(400))
 
     def test_tab_report_response_carries_current_track_and_host(self):
@@ -193,7 +191,7 @@ class DesktopProtocolTests(unittest.TestCase):
             payload, {"status": "ok", "track": None, "host": None}
         )
 
-    def test_protocol4_page_metadata_owns_provider_track_identity(self):
+    def test_page_metadata_owns_track_identity(self):
         tab = {
             "host": "music.youtube.com",
             "mediaId": "a1B2c3D4e5F",
@@ -202,9 +200,10 @@ class DesktopProtocolTests(unittest.TestCase):
         }
 
         self.assertEqual(
-            presence.protocol4_page_track(tab, 4), ("Next Song", "Next Artist")
+            presence.page_reported_track(tab), ("Next Song", "Next Artist")
         )
-        self.assertIsNone(presence.protocol4_page_track(tab, 3))
+        self.assertIsNone(presence.page_reported_track({**tab, "metadata": None}))
+        self.assertIsNone(presence.page_reported_track(None))
 
     def test_classification_fallback_and_labels_cover_both_services(self):
         report = {
@@ -467,14 +466,14 @@ class ArtworkTests(unittest.TestCase):
                 )
             )
 
-    def test_unidentified_browser_track_is_not_sent_to_soundcloud(self):
-        with mock.patch.object(presence, "_legacy_soundcloud_info") as soundcloud:
+    def test_unidentified_browser_track_makes_no_lookup(self):
+        with mock.patch.object(presence, "_http_get") as get:
             self.assertIsNone(
                 presence.find_artwork(
                     "Video", "Channel", source="Google.Chrome_123"
                 )
             )
-        soundcloud.assert_not_called()
+        get.assert_not_called()
 
 
 class TitleMatchTests(unittest.TestCase):
@@ -717,6 +716,83 @@ class ResolveTabTests(unittest.TestCase):
             presence.resolve_tab("Real Song", "Google.Chrome_1", report)
         )
 
+    def test_reporting_apple_tab_survives_a_co_audible_video(self):
+        # Starting a regular YouTube video must not stop Apple Music: the
+        # page names the track it is playing, so the media session's single
+        # title is not needed to identify it.
+        apple = {
+            **self.APPLE,
+            "position": 42.0,
+            "duration": 207.0,
+            "playing": True,
+            "sampledAt": 1_750_000_000_000.0,
+            "metadata": {"title": "Real Song", "artist": "Real Artist", "artwork": None},
+        }
+        report = self._report([apple, self.YT_VIDEO])
+
+        # The media session still describes the Apple track.
+        self.assertEqual(
+            presence.resolve_tab("Real Song", "Google.Chrome_1", report), apple
+        )
+        # The video took the media session over: Apple is still the only tab
+        # that says what it is playing, and its own metadata names the track.
+        self.assertEqual(
+            presence.resolve_tab("Cool Clip", "Google.Chrome_1", report), apple
+        )
+        self.assertEqual(
+            presence.page_reported_track(apple), ("Real Song", "Real Artist")
+        )
+
+    def test_paused_reporting_tab_is_not_attributed(self):
+        apple = {
+            **self.APPLE,
+            "position": 42.0,
+            "duration": 207.0,
+            "playing": False,
+            "sampledAt": 1_750_000_000_000.0,
+            "metadata": {"title": "Real Song", "artist": "Real Artist", "artwork": None},
+        }
+        report = self._report([apple, self.YT_VIDEO])
+        self.assertIsNone(
+            presence.resolve_tab("Cool Clip", "Google.Chrome_1", report)
+        )
+
+    def test_two_reporting_tabs_stay_ambiguous(self):
+        apple = {
+            **self.APPLE,
+            "metadata": {"title": "Real Song", "artist": "Real Artist", "artwork": None},
+        }
+        soundcloud = {
+            "host": "soundcloud.com",
+            "mediaId": None,
+            "title": "Cloud Song by Cloud Artist",
+            "metadata": {"title": "Cloud Song", "artist": "Cloud Artist", "artwork": None},
+        }
+        report = self._report([apple, soundcloud, self.YT_VIDEO])
+        self.assertIsNone(
+            presence.resolve_tab("Mystery Title", "Google.Chrome_1", report)
+        )
+        # A title that names one of them is still attributed to that one.
+        self.assertEqual(
+            presence.resolve_tab("Cloud Song", "Google.Chrome_1", report), soundcloud
+        )
+
+    def test_apple_metadata_title_matches_the_media_session(self):
+        apple = {
+            **self.APPLE,
+            "metadata": {"title": "Real Song", "artist": "Real Artist", "artwork": None},
+        }
+        soundcloud = {
+            "host": "soundcloud.com",
+            "mediaId": None,
+            "title": "Cloud Song by Cloud Artist",
+            "metadata": {"title": "Cloud Song", "artist": "Cloud Artist", "artwork": None},
+        }
+        report = self._report([apple, soundcloud])
+        self.assertEqual(
+            presence.classify_tab("Real Song", report), apple
+        )
+
 
 class FallbackTimingTests(unittest.TestCase):
     FB = ("Cloud Song", "Cloud Artist", "soundcloud.com", None)
@@ -725,12 +801,12 @@ class FallbackTimingTests(unittest.TestCase):
     def test_no_anchor_publishes_nothing(self):
         # Never saw this track's real position, so the only thing we could
         # show is a frozen 0:00. Publish nothing instead.
-        self.assertIsNone(presence.fallback_timing(self.FB, {}, self.NOW))
+        self.assertIsNone(presence.fallback_timing(self.FB, None, {}, self.NOW))
 
     def test_recent_anchor_yields_moving_position(self):
         # Real position captured 40s ago on a 180s track: still valid.
         seen = {("Cloud Song", "Cloud Artist"): (self.NOW - 40, 180.0)}
-        result = presence.fallback_timing(self.FB, seen, self.NOW)
+        result = presence.fallback_timing(self.FB, None, seen, self.NOW)
         self.assertEqual(
             result, ("Cloud Song", "Cloud Artist", 40.0, 180.0, "tab:soundcloud.com")
         )
@@ -738,11 +814,64 @@ class FallbackTimingTests(unittest.TestCase):
     def test_anchor_past_track_end_plus_grace_is_dropped(self):
         # Anchored 220s ago on a 180s track (> dur + 30 grace): stale.
         seen = {("Cloud Song", "Cloud Artist"): (self.NOW - 220, 180.0)}
-        self.assertIsNone(presence.fallback_timing(self.FB, seen, self.NOW))
+        self.assertIsNone(presence.fallback_timing(self.FB, None, seen, self.NOW))
 
     def test_anchor_for_a_different_track_is_ignored(self):
         seen = {("Other Song", "Other Artist"): (self.NOW - 10, 180.0)}
-        self.assertIsNone(presence.fallback_timing(self.FB, seen, self.NOW))
+        self.assertIsNone(presence.fallback_timing(self.FB, None, seen, self.NOW))
+
+    def test_apple_page_sample_needs_no_anchor(self):
+        # A paused video can hold the browser's only media session while Apple
+        # Music keeps playing. MusicKit still reports the real position, so
+        # there is nothing to recover from a previous reading.
+        now = 1_750_000_010.0
+        tab = {
+            "host": "music.apple.com",
+            "mediaId": None,
+            "title": "Album - Album by Artist - Apple Music",
+            "position": 42.0,
+            "duration": 207.0,
+            "playing": True,
+            "sampledAt": 1_750_000_008_000.0,
+            "metadata": {"title": "Real Song", "artist": "Real Artist", "artwork": None},
+        }
+        fb = ("Real Song", "Real Artist", "music.apple.com", None)
+        self.assertEqual(
+            presence.fallback_timing(fb, tab, {}, now),
+            ("Real Song", "Real Artist", 44.0, 207.0, "tab:music.apple.com"),
+        )
+
+    def test_apple_fallback_track_comes_from_page_metadata(self):
+        report = {
+            "enabled": True,
+            "services": {"appleMusic": True, "soundcloud": True, "youtubeMusic": True},
+            "tabs": [
+                {
+                    "host": "music.apple.com",
+                    "mediaId": None,
+                    "title": "Album - Album by Artist - Apple Music",
+                    "playing": True,
+                    "position": 42.0,
+                    "duration": 207.0,
+                    "sampledAt": 1_750_000_008_000.0,
+                    "metadata": {
+                        "title": "Real Song",
+                        "artist": "Real Artist",
+                        "artwork": None,
+                    },
+                }
+            ],
+        }
+        self.assertEqual(
+            presence.fallback_track(report),
+            ("Real Song", "Real Artist", "music.apple.com", None),
+        )
+        # Without metadata the page title cannot name the track, so Apple has
+        # no fallback at all.
+        bare = dict(report, tabs=[
+            {k: v for k, v in report["tabs"][0].items() if k != "metadata"}
+        ])
+        self.assertIsNone(presence.fallback_track(bare))
 
 
 class AppleExtensionTimingTests(unittest.TestCase):
