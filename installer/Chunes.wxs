@@ -60,6 +60,16 @@
     <Property Id="WixShellExecTarget" Value="[#ChunesExe]" />
     <Property Id="AUTO_UPDATE" Value="1" Secure="yes" />
     <Property Id="ARTWORK" Value="1" Secure="yes" />
+    <Property Id="AUTOSTART" Value="1" Secure="yes" />
+    <Property Id="EXISTING_AUTOSTART">
+      <RegistrySearch
+        Id="ExistingAutostart"
+        Root="HKCU"
+        Key="Software\Microsoft\Windows\CurrentVersion\Run"
+        Name="Chunes"
+        Type="raw"
+        Win64="yes" />
+    </Property>
     <Property Id="EXISTING_AUTO_UPDATE">
       <RegistrySearch
         Id="ExistingAutoUpdate"
@@ -100,6 +110,15 @@
       Id="PreserveArtworkOptOut"
       Property="ARTWORK"
       Value="0" />
+    <!--
+      A fresh install starts Chunes with Windows. An existing installation
+      whose Run value is gone is a deliberate opt out, made either from the
+      tray menu or from Task Manager, so an upgrade must not restore it.
+    -->
+    <CustomAction
+      Id="PreserveAutostartOptOut"
+      Property="AUTOSTART"
+      Value="0" />
     <CustomAction
       Id="MigrateOwnedAutostart"
       FileKey="ChunesExe"
@@ -135,6 +154,9 @@
       <Custom
         Action="PreserveArtworkOptOut"
         After="PreserveAutoUpdateOptOut">EXISTING_ARTWORK = "#0"</Custom>
+      <Custom
+        Action="PreserveAutostartOptOut"
+        After="PreserveArtworkOptOut">EXISTING_INSTALL_PATH AND NOT EXISTING_AUTOSTART</Custom>
     </InstallUISequence>
     <InstallExecuteSequence>
       <Custom Action="SetCloseChunesCmd" Before="CloseChunesEarly" />
@@ -148,6 +170,9 @@
       <Custom
         Action="PreserveArtworkOptOut"
         After="PreserveAutoUpdateOptOut">EXISTING_ARTWORK = "#0" AND UILevel &lt; 5</Custom>
+      <Custom
+        Action="PreserveAutostartOptOut"
+        After="PreserveArtworkOptOut">EXISTING_INSTALL_PATH AND NOT EXISTING_AUTOSTART AND UILevel &lt; 5</Custom>
       <Custom
         Action="MigrateOwnedAutostart"
         After="InstallFinalize">NOT REMOVE~="ALL"</Custom>
@@ -237,6 +262,24 @@
                 Value="[ARTWORK]"
                 KeyPath="yes" />
             </Component>
+
+            <Component
+              Id="AutostartSetting"
+              Guid="{157CDA70-82C3-433B-9050-8642F36959EA}"
+              Win64="yes">
+              <Condition>AUTOSTART = "1"</Condition>
+              <!--
+                Quoted so chunes.py parses the command back to exactly one
+                argument even when the installation directory has spaces.
+              -->
+              <RegistryValue
+                Root="HKCU"
+                Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                Name="Chunes"
+                Type="string"
+                Value="&quot;[#ChunesExe]&quot;"
+                KeyPath="yes" />
+            </Component>
           </Directory>
         </Directory>
       </Directory>
@@ -247,6 +290,7 @@
       <ComponentRef Id="ApplicationFiles" />
       <ComponentRef Id="AutoUpdateSetting" />
       <ComponentRef Id="ArtworkSetting" />
+      <ComponentRef Id="AutostartSetting" />
     </Feature>
 
     <UI Id="ChunesUI">

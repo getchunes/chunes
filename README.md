@@ -49,6 +49,10 @@ never attached to a GitHub release.
    and make sure Discord's **Share my activity** setting is on and the Discord
    status is not Invisible.
 
+Chunes starts with Windows after a first install, on both channels. Turn it off
+from the tray menu, or from Windows **Settings > Apps > Startup**. Upgrades keep
+that choice; they never restore autostart once you have turned it off.
+
 Run a newer MSI to upgrade Chunes or rerun the current MSI to repair it. Windows
 **Installed apps** can uninstall Chunes. New MSI releases use a stable
 UpgradeCode, restore a custom installation directory, and preserve existing
