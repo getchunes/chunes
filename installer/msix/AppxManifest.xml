@@ -15,7 +15,7 @@
   <Identity
     Name="dubsector.dev.Chunes"
     Publisher="CN=75E3A6B2-AC96-45EC-9B42-5EB66C83F2D2"
-    Version="1.0.12.0"
+    Version="1.0.14.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
