@@ -55,8 +55,8 @@ class FakeWriter:
         pass
 
 
-def tab_report_request(report):
-    body = json.dumps({"protocol": 4, **report}).encode()
+def tab_report_request(report, version=4):
+    body = json.dumps({"protocol": version, **report}).encode()
     head = (
         "POST /tabs HTTP/1.1\r\n"
         "Host: 127.0.0.1:52846\r\n"
@@ -67,17 +67,17 @@ def tab_report_request(report):
     return head + body
 
 
-async def _run_tab_report(report):
+async def _run_tab_report(report, version=4):
     reader = asyncio.StreamReader()
-    reader.feed_data(tab_report_request(report))
+    reader.feed_data(tab_report_request(report, version))
     reader.feed_eof()
     writer = FakeWriter()
     await presence._handle_tab_report(reader, writer)
     return writer.written
 
 
-def send_tab_report(report):
-    written = asyncio.run(_run_tab_report(report))
+def send_tab_report(report, version=4):
+    written = asyncio.run(_run_tab_report(report, version))
     header, _, payload = written.partition(b"\r\n\r\n")
     return header, json.loads(payload)
 
@@ -160,6 +160,20 @@ class DesktopProtocolTests(unittest.TestCase):
                 reply = presence._http_reply(status, b"{}" if status == 200 else b"")
                 self.assertIn(f"X-Chunes-Protocol: {version}\r\n".encode(), reply)
         self.assertNotIn(b"X-Chunes-Protocol", presence._http_reply(400))
+
+    def test_a_report_is_answered_in_the_version_it_arrived_in(self):
+        # The extension rejects any response that does not carry its own
+        # version, so the store build stays connected while it still sends v4.
+        report = {
+            "enabled": True,
+            "services": {"appleMusic": True, "soundcloud": True, "youtubeMusic": True},
+            "tabs": [],
+        }
+        for version in presence.protocol.SUPPORTED_PROTOCOL_VERSIONS:
+            with self.subTest(version=version):
+                header, _ = send_tab_report(report, version)
+                self.assertIn(b"200 OK", header)
+                self.assertIn(f"X-Chunes-Protocol: {version}\r\n".encode(), header)
 
     def test_tab_report_response_carries_current_track_and_host(self):
         presence.set_status(track="Real Song - Real Artist", host="music.youtube.com")
@@ -498,6 +512,133 @@ class TitleMatchTests(unittest.TestCase):
         self.assertFalse(presence._titles_match("Song", ""))
 
 
+class TrackLinkTests(unittest.TestCase):
+    def test_the_reported_tab_address_wins(self):
+        # A v5 extension knows exactly where the track is; nothing derived
+        # can beat that.
+        self.assertEqual(
+            presence.track_link(
+                "music.youtube.com",
+                "a1B2c3D4e5F",
+                "Song",
+                "Artist",
+                tab_url="https://music.youtube.com/watch?v=a1B2c3D4e5F&list=X",
+            ),
+            "https://music.youtube.com/watch?v=a1B2c3D4e5F&list=X",
+        )
+
+    def test_youtube_music_video_id_names_the_track(self):
+        self.assertEqual(
+            presence.track_link("music.youtube.com", "a1B2c3D4e5F", "Song", "Artist"),
+            "https://music.youtube.com/watch?v=a1B2c3D4e5F",
+        )
+
+    def test_apple_music_prefers_the_itunes_match_over_a_search(self):
+        matched = "https://music.apple.com/us/album/real-song/1?i=2"
+        self.assertEqual(
+            presence.track_link(
+                "music.apple.com", None, "Real Song", "Artist", itunes_url=matched
+            ),
+            matched,
+        )
+        # With album art lookup off there is no iTunes call to learn from.
+        self.assertEqual(
+            presence.track_link("music.apple.com", None, "Real Song", "Artist"),
+            "https://music.apple.com/search?term=Real%20Song%20Artist",
+        )
+
+    def test_soundcloud_falls_back_to_a_search(self):
+        self.assertEqual(
+            presence.track_link("soundcloud.com", None, "Song", "Artist"),
+            "https://soundcloud.com/search?q=Song%20Artist",
+        )
+        # A YouTube Music tab with no video ID searches the same way.
+        self.assertEqual(
+            presence.track_link("music.youtube.com", None, "Song", "Artist"),
+            "https://music.youtube.com/search?q=Song%20Artist",
+        )
+
+    def test_query_characters_are_escaped(self):
+        link = presence.track_link("soundcloud.com", None, "Rock & Roll?", "A/B")
+        self.assertEqual(
+            link, "https://soundcloud.com/search?q=Rock%20%26%20Roll%3F%20A/B"
+        )
+
+    def test_an_unknown_host_gets_no_link(self):
+        # A desktop player carries the config's own service label, which says
+        # nothing about where the track can be opened.
+        self.assertIsNone(presence.track_link(None, None, "Song", "Artist"))
+        self.assertIsNone(presence.track_link("example.com", None, "Song", "Artist"))
+
+    def test_a_nameless_track_gets_no_link(self):
+        self.assertIsNone(presence.track_link("soundcloud.com", None, "", ""))
+
+
+class PresenceButtonTests(unittest.TestCase):
+    def test_track_button_is_labelled_for_its_service(self):
+        self.assertEqual(
+            presence.presence_buttons(
+                "soundcloud.com", None, "Song", "Artist", "SoundCloud"
+            ),
+            [
+                {
+                    "label": "Play on SoundCloud",
+                    "url": "https://soundcloud.com/search?q=Song%20Artist",
+                }
+            ],
+        )
+
+    def test_labels_stay_within_the_discord_limit(self):
+        # A config may set any service label it likes for a desktop player.
+        buttons = presence.presence_buttons(
+            "music.youtube.com",
+            "a1B2c3D4e5F",
+            "Song",
+            "Artist",
+            "A Very Long Music Service Name Indeed",
+        )
+        self.assertEqual(len(buttons[0]["label"]), presence.MAX_BUTTON_LABEL_CHARS)
+
+    def test_no_buttons_when_both_are_switched_off(self):
+        self.assertEqual(
+            presence.presence_buttons(
+                "soundcloud.com",
+                None,
+                "Song",
+                "Artist",
+                "SoundCloud",
+                show_track=False,
+                show_get_chunes=False,
+            ),
+            [],
+        )
+
+    def test_the_get_chunes_button_is_opt_in_and_comes_second(self):
+        buttons = presence.presence_buttons(
+            "soundcloud.com",
+            None,
+            "Song",
+            "Artist",
+            "SoundCloud",
+            show_get_chunes=True,
+        )
+        self.assertEqual(len(buttons), 2)
+        self.assertEqual(buttons[1]["label"], "Get Chunes")
+        self.assertEqual(buttons[1]["url"], presence.EXTENSION_LISTING_URL)
+
+    def test_no_track_button_without_a_link_or_a_label(self):
+        # An unknown host resolves no link, and a desktop source with no
+        # configured label has nothing to name.
+        self.assertEqual(
+            presence.presence_buttons("example.com", None, "Song", "Artist", "Winamp"),
+            [],
+        )
+        self.assertEqual(
+            presence.presence_buttons("soundcloud.com", None, "Song", "Artist", ""),
+            [],
+        )
+
+
 class ProviderDurationGuardTests(unittest.TestCase):
     def setUp(self):
         presence._artwork_cache.clear()
@@ -517,9 +658,10 @@ class ProviderDurationGuardTests(unittest.TestCase):
             }
         )
         with mock.patch.object(presence, "_http_get", return_value=response):
-            art, dur = presence._find_apple_music_info("Gimme Dat Ting", "Davido")
+            art, dur, url = presence._find_apple_music_info("Gimme Dat Ting", "Davido")
         self.assertEqual(dur, 0.0)
         self.assertEqual(art, "https://is1.mzstatic.com/a/500x500bb.jpg")
+        self.assertIsNone(url)
 
     def test_apple_duration_taken_only_from_matched_result(self):
         response = json.dumps(
@@ -534,17 +676,19 @@ class ProviderDurationGuardTests(unittest.TestCase):
                         "trackName": "Real Song",
                         "trackTimeMillis": 180000,
                         "artworkUrl100": "https://is1.mzstatic.com/b/100x100bb.jpg",
+                        "trackViewUrl": "https://music.apple.com/us/album/real-song/1?i=2",
                     },
                 ]
             }
         )
         with mock.patch.object(presence, "_http_get", return_value=response):
-            art, dur = presence._find_apple_music_info("Real Song", "Artist")
+            art, dur, url = presence._find_apple_music_info("Real Song", "Artist")
         self.assertEqual(dur, 180.0)
         self.assertEqual(art, "https://is1.mzstatic.com/b/500x500bb.jpg")
+        self.assertEqual(url, "https://music.apple.com/us/album/real-song/1?i=2")
 
     def test_soundcloud_page_metadata_has_no_duration_guess(self):
-        art, dur = presence.find_artwork_and_info(
+        art, dur, _ = presence.find_artwork_and_info(
             "Gimme Dat Ting",
             "Davido",
             "soundcloud.com",

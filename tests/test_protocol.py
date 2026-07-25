@@ -53,13 +53,75 @@ class ReportValidationTests(unittest.TestCase):
 
         self.assertEqual(report["tabs"][0]["metadata"], value["tabs"][0]["metadata"])
 
-    def test_requires_the_current_protocol_marker(self):
+    def test_accepts_either_supported_protocol_version(self):
+        # The store build keeps sending v4 until every browser has updated.
+        for version in (4, 5):
+            with self.subTest(version=version):
+                value = dict(copy.deepcopy(VALID_REPORT), protocol=version)
+
+                report, negotiated = protocol.validate_report(
+                    value, include_version=True
+                )
+
+                self.assertEqual(report, VALIDATED_REPORT)
+                self.assertEqual(negotiated, version)
+
+    def test_accepts_the_playing_tabs_own_address_on_v5(self):
+        value = dict(copy.deepcopy(VALID_REPORT), protocol=5)
+        value["tabs"][0]["trackUrl"] = "https://soundcloud.com/artist/song"
+
+        report = protocol.validate_report(value)
+
+        self.assertEqual(
+            report["tabs"][0]["trackUrl"], "https://soundcloud.com/artist/song"
+        )
+        # An omitted or null address leaves the key off entirely.
+        self.assertNotIn("trackUrl", report["tabs"][1])
+        value["tabs"][0]["trackUrl"] = None
+        self.assertNotIn("trackUrl", protocol.validate_report(value)["tabs"][0])
+
+    def test_rejects_a_tab_address_from_a_v4_reporter(self):
+        value = copy.deepcopy(VALID_REPORT)
+        value["tabs"][0]["trackUrl"] = "https://soundcloud.com/artist/song"
+
+        with self.assertRaises(protocol.ProtocolError) as raised:
+            protocol.validate_report(value)
+
+        self.assertEqual(raised.exception.status, 400)
+
+    def test_rejects_a_tab_address_that_is_not_the_tabs_own_page(self):
+        # A tab may only say where it already is: anything else would put an
+        # address of the page's choosing on the user's Discord profile.
+        invalid = [
+            "https://example.com/song",
+            "https://soundcloud.com.example.com/song",
+            "http://soundcloud.com/artist/song",
+            "https://user:pass@soundcloud.com/artist/song",
+            "javascript:alert(1)",
+            "",
+            "https://soundcloud.com/" + "a" * protocol.MAX_TRACK_URL_CHARS,
+            12,
+        ]
+
+        for track_url in invalid:
+            with self.subTest(track_url=track_url):
+                value = dict(copy.deepcopy(VALID_REPORT), protocol=5)
+                value["tabs"][0]["trackUrl"] = track_url
+
+                with self.assertRaises(protocol.ProtocolError) as raised:
+                    protocol.validate_report(value)
+
+                self.assertEqual(raised.exception.status, 400)
+
+    def test_requires_a_supported_protocol_marker(self):
         # Superseded protocol 3 sent no marker at all.
         unmarked = copy.deepcopy(VALID_REPORT)
         del unmarked["protocol"]
         superseded = dict(copy.deepcopy(VALID_REPORT), protocol=3)
+        unreleased = dict(copy.deepcopy(VALID_REPORT), protocol=6)
+        mistyped = dict(copy.deepcopy(VALID_REPORT), protocol="5")
 
-        for value in (unmarked, superseded):
+        for value in (unmarked, superseded, unreleased, mistyped):
             with self.subTest(value=value):
                 with self.assertRaises(protocol.ProtocolError) as raised:
                     protocol.validate_report(value)

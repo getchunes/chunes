@@ -43,6 +43,13 @@ RPC_CLOSE = 2
 RPC_PING = 3
 RPC_PONG = 4
 MAX_RPC_FRAME_BYTES = 1024 * 1024
+# Discord allows two presence buttons, each with a label of at most 32
+# characters and an http(s) URL, and shows them to everyone but the listener.
+MAX_BUTTON_LABEL_CHARS = 32
+GET_CHUNES_LABEL = "Get Chunes"
+EXTENSION_LISTING_URL = (
+    "https://chromewebstore.google.com/detail/chune-id/ofbfkbhgfhoapckgjcpmcohbhnogpfjd"
+)
 
 DEFAULT_CONFIG = {
     "client_id": "1527834085383213106",
@@ -143,7 +150,9 @@ def _fresh_tab_report():
     return None
 
 
-def _http_reply(status, body=b""):
+def _http_reply(status, body=b"", protocol_version=protocol.PROTOCOL_VERSION):
+    # The extension rejects any response that does not carry its own version,
+    # so a report is answered in the version it arrived in.
     reasons = {
         200: "OK",
         204: "No Content",
@@ -165,7 +174,7 @@ def _http_reply(status, body=b""):
         f"Content-Length: {len(body)}",
     ]
     if 200 <= status < 300:
-        headers.append(f"X-Chunes-Protocol: {protocol.PROTOCOL_VERSION}")
+        headers.append(f"X-Chunes-Protocol: {protocol_version}")
     if body:
         headers.append("Content-Type: application/json")
     return ("\r\n".join(headers) + "\r\n\r\n").encode("ascii") + body
@@ -186,7 +195,7 @@ async def _handle_tab_report(reader, writer):
             body = await asyncio.wait_for(
                 reader.readexactly(request.content_length), 5
             )
-            report = protocol.parse_report_body(body)
+            report, version = protocol.parse_report_body(body, include_version=True)
             hosts = sorted({tab["host"] for tab in report["tabs"]})
             old_hosts = sorted({tab["host"] for tab in _tab_state["tabs"]})
             if (
@@ -208,7 +217,7 @@ async def _handle_tab_report(reader, writer):
                 {"status": "ok", "track": current_track, "host": current_host},
                 separators=(",", ":"),
             ).encode()
-            reply = _http_reply(200, res_body)
+            reply = _http_reply(200, res_body, version)
     except protocol.ProtocolError as exc:
         reply = _http_reply(exc.status)
     except (
@@ -445,10 +454,22 @@ def _http_get(url, headers=None):
         return resp.read().decode("utf-8", errors="replace")
 
 
+def _apple_music_track_url(value):
+    """The searched track's own Apple Music page, when the API returned one."""
+    if not isinstance(value, str) or not value:
+        return None
+    parsed = urllib.parse.urlsplit(value)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or hostname != "music.apple.com":
+        return None
+    return value
+
+
 def _find_apple_music_info(title, artist):
-    """Best-effort Apple Music artwork and duration from the public iTunes Search API."""
+    """Best-effort Apple Music artwork, duration and track page from the public iTunes Search API."""
     art = None
     dur = 0.0
+    url = None
     try:
         q = urllib.parse.quote(f"{title} {artist}".strip())
         data = json.loads(_http_get(
@@ -457,6 +478,7 @@ def _find_apple_music_info(title, artist):
         ))
         matched_art = None
         matched_dur = 0.0
+        matched_url = None
         fallback_art = None
         for t in data.get("results", []):
             cand_art = t.get("artworkUrl100")
@@ -465,18 +487,21 @@ def _find_apple_music_info(title, artist):
                 if isinstance(cand_art, str) and cand_art:
                     matched_art = cand_art
                 matched_dur = cand_dur
+                matched_url = _apple_music_track_url(t.get("trackViewUrl"))
                 break
             if fallback_art is None and isinstance(cand_art, str) and cand_art:
                 fallback_art = cand_art
         best_art = matched_art or fallback_art
         if best_art:
             art = best_art.replace("100x100", "500x500")
-        # Duration only from a title-matched result; a fallback thumbnail is low
-        # harm, a wrong duration paints a wrong progress bar.
+        # Duration and track page only from a title-matched result; a fallback
+        # thumbnail is low harm, a wrong duration paints a wrong progress bar
+        # and a wrong link sends listeners to the wrong song.
         dur = matched_dur
+        url = matched_url
     except Exception as e:
         print(f"Apple Music artwork lookup failed: {type(e).__name__}: {e}")
-    return art, dur
+    return art, dur, url
 
 
 def _find_apple_music_artwork(title, artist):
@@ -486,7 +511,7 @@ def _find_apple_music_artwork(title, artist):
 def find_artwork_and_info(
     title, artist, host=None, media_id=None, source=None, metadata=None
 ):
-    """Return (art_url, duration_s) from trusted page metadata or Apple Search."""
+    """Return (art_url, duration_s, track_url) from page metadata or Apple Search."""
     key = (host, media_id, source, title, artist, str(metadata))
     if key in _artwork_cache:
         return _artwork_cache[key]
@@ -494,15 +519,16 @@ def find_artwork_and_info(
     service = protocol.service_for_host(host)
     art = None
     dur = 0.0
+    url = None
 
     if metadata:
         art = metadata["artwork"]
     elif service == "appleMusic":
-        art, dur = _find_apple_music_info(title, artist)
+        art, dur, url = _find_apple_music_info(title, artist)
     elif not protocol.is_browser_source(source):
-        art, dur = _find_apple_music_info(title, artist)
+        art, dur, url = _find_apple_music_info(title, artist)
 
-    res = (art, dur)
+    res = (art, dur, url)
     _artwork_cache[key] = res
     if len(_artwork_cache) > 500:
         _artwork_cache.pop(next(iter(_artwork_cache)))
@@ -511,8 +537,70 @@ def find_artwork_and_info(
 
 def find_artwork(title, artist, host=None, media_id=None, source=None, metadata=None):
     """Return source-specific online album artwork for the current track."""
-    art, _ = find_artwork_and_info(title, artist, host, media_id, source, metadata)
+    art, _, _ = find_artwork_and_info(title, artist, host, media_id, source, metadata)
     return art
+
+
+# Where a service looks a track up when nothing names it exactly. A search
+# lands the listener on the right song without pretending to be a permalink.
+TRACK_SEARCH_URLS = {
+    "appleMusic": "https://music.apple.com/search?term={query}",
+    "soundcloud": "https://soundcloud.com/search?q={query}",
+    "youtubeMusic": "https://music.youtube.com/search?q={query}",
+}
+
+
+def track_link(host, media_id, title, artist, tab_url=None, itunes_url=None):
+    """Best available URL for opening the current track on its own service.
+
+    The playing tab knows its own address, so it wins whenever the extension is
+    new enough to report one. Failing that a YouTube Music video ID and an
+    iTunes title match still name a specific track, and everything else falls
+    back to that service's search.
+    """
+    service = protocol.service_for_host(host)
+    if service is None:
+        return None
+    if tab_url:
+        return tab_url
+    if service == "youtubeMusic" and media_id:
+        return f"https://music.youtube.com/watch?v={urllib.parse.quote(media_id)}"
+    if service == "appleMusic" and itunes_url:
+        return itunes_url
+    query = urllib.parse.quote(f"{title} {artist}".strip())
+    if not query:
+        return None
+    return TRACK_SEARCH_URLS[service].format(query=query)
+
+
+def presence_buttons(
+    host,
+    media_id,
+    title,
+    artist,
+    label,
+    tab_url=None,
+    itunes_url=None,
+    show_track=True,
+    show_get_chunes=False,
+):
+    """The presence buttons for the current track, in display order.
+
+    Discord shows these to everyone except the listener, so the track button
+    is only offered when a link actually resolves; a button that opens the
+    wrong thing is worse than no button at all.
+    """
+    buttons = []
+    if show_track and label:
+        link = track_link(host, media_id, title, artist, tab_url, itunes_url)
+        if link:
+            buttons.append({
+                "label": f"Play on {label}"[:MAX_BUTTON_LABEL_CHARS],
+                "url": link,
+            })
+    if show_get_chunes:
+        buttons.append({"label": GET_CHUNES_LABEL, "url": EXTENSION_LISTING_URL})
+    return buttons
 
 
 def load_config():
@@ -762,6 +850,9 @@ async def main():
         if track:
             now = time.time()
             use_artwork = settings.artwork_enabled()
+            show_track_button = settings.track_button_enabled()
+            show_get_chunes_button = settings.get_chunes_button_enabled()
+            tab_url = tab.get(protocol.TRACK_URL_KEY) if tab else None
             is_apple = protocol.service_for_host(host) == "appleMusic"
             ext_timing = None
             # A fallback track exists only when a real anchor was recovered,
@@ -809,7 +900,20 @@ async def main():
             # Re-send only on track change or a seek (start timestamp moved
             # by more than a few seconds); Discord drops clients that spam
             # SET_ACTIVITY every poll.
-            key = (title, artist, host, media_id, use_artwork, dur > 0)
+            # The iTunes link is only resolved further down, but it follows
+            # from the title and artist already keyed here; the tab's own
+            # address is the one link input that can change on its own.
+            key = (
+                title,
+                artist,
+                host,
+                media_id,
+                use_artwork,
+                dur > 0,
+                show_track_button,
+                show_get_chunes_button,
+                tab_url,
+            )
             # Re-send periodically even if unchanged: Discord forgets the
             # activity if the client reloads, and we only notice the dead
             # pipe when we next write to it.
@@ -828,8 +932,9 @@ async def main():
                     )
                 art = None
                 info_dur = 0.0
+                itunes_url = None
                 if use_artwork:
-                    art, info_dur = await asyncio.to_thread(
+                    art, info_dur, itunes_url = await asyncio.to_thread(
                         find_artwork_and_info,
                         title,
                         artist,
@@ -871,6 +976,19 @@ async def main():
                 label = protocol.service_label_for_host(host, service)
                 if label:
                     kwargs["large_text"] = label
+                buttons = presence_buttons(
+                    host,
+                    media_id,
+                    title,
+                    artist,
+                    label,
+                    tab_url,
+                    itunes_url,
+                    show_track_button,
+                    show_get_chunes_button,
+                )
+                if buttons:
+                    kwargs["buttons"] = buttons
                 if await send(lambda r: r.update(**kwargs)):
                     last = (key, start, now)
         else:

@@ -14,7 +14,7 @@ playback pauses, and labels both supported services correctly.
 - the Discord desktop app running on the same PC
 - the [Chune ID browser extension](https://chromewebstore.google.com/detail/chune-id/ofbfkbhgfhoapckgjcpmcohbhnogpfjd)
   for accurate browser service, pause, and enable/disable filtering. This
-  Chunes release requires protocol 4, which Chune ID 1.0.10 and later send;
+  Chunes release accepts protocol 4 and 5, which Chune ID 1.0.10 and later send;
   the [extension source is on GitHub](https://github.com/getchunes/chunes-extension)
 
 ## Install
@@ -108,7 +108,7 @@ the exact media type `application/json`:
     {"host": "soundcloud.com", "mediaId": null, "title": "Track by Artist"},
     {"host": "music.youtube.com", "mediaId": "a1B2c3D4e5F", "title": "Track - Artist"}
   ],
-  "protocol": 4
+  "protocol": 5
 }
 ```
 
@@ -119,8 +119,11 @@ report expires after 90 seconds. The tray displays **Chune ID: on**, **off**, or
 **not connected** so the extension master state is visible without duplicating
 its control in the app.
 
-Reports carry `"protocol": 4` and optional, bounds-checked page Media Session
-metadata, and Chunes answers with the matching `X-Chunes-Protocol` header.
+Reports carry `"protocol": 4` or `"protocol": 5` and optional, bounds-checked
+page Media Session metadata, and Chunes answers with the `X-Chunes-Protocol`
+header matching the version the report arrived in. Protocol 5 adds an optional
+`trackUrl` per tab, which must be an `https` address on that tab's own host, so
+the presence button can open the track itself rather than a search for it.
 Earlier protocol versions are no longer accepted.
 
 A tab that reports its own metadata names the track it is playing, so it stays
@@ -144,10 +147,17 @@ the correct service when another tab owns the browser media session.
 - **Look up online album art** controls whether Chunes uses the provider artwork
   URL supplied locally by Chune ID or looks the cover up on the public Apple
   Search API.
+- **Show "Play on..." button** adds a button to the Discord status that opens
+  the playing track on its own service. On by default.
+- **Show "Get Chunes" button** adds a second button linking to the Chune ID
+  listing on the Chrome Web Store. Off by default.
 - **Open log** opens `%LOCALAPPDATA%\Chunes\chunes.log`.
 - **Quit** clears the process from the notification area and stops Chunes.
 
-The automatic-update and online-artwork settings are checkable and stored under
+Discord shows presence buttons to everyone who opens the profile except the
+listener, so you will not see your own.
+
+These settings are all checkable and stored under
 `HKEY_CURRENT_USER\Software\Chunes`. See [PRIVACY.md](PRIVACY.md) for every
 local and network data flow and the corresponding opt-outs.
 

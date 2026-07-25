@@ -6,6 +6,8 @@ import winreg
 SETTINGS_KEY = r"Software\Chunes"
 AUTO_UPDATE_VALUE = "AutomaticallyCheckForUpdates"
 ARTWORK_VALUE = "LookUpOnlineCoverArt"
+TRACK_BUTTON_VALUE = "ShowTrackButton"
+GET_CHUNES_BUTTON_VALUE = "ShowGetChunesButton"
 
 
 def get_bool(name, default=True):
@@ -40,3 +42,21 @@ def artwork_enabled():
 
 def set_artwork_enabled(enabled):
     set_bool(ARTWORK_VALUE, enabled)
+
+
+def track_button_enabled():
+    return get_bool(TRACK_BUTTON_VALUE)
+
+
+def set_track_button_enabled(enabled):
+    set_bool(TRACK_BUTTON_VALUE, enabled)
+
+
+# Off by default: this one advertises Chunes to whoever opens the profile
+# rather than describing what is playing, so it stays the user's own choice.
+def get_chunes_button_enabled():
+    return get_bool(GET_CHUNES_BUTTON_VALUE, default=False)
+
+
+def set_get_chunes_button_enabled(enabled):
+    set_bool(GET_CHUNES_BUTTON_VALUE, enabled)

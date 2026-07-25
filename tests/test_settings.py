@@ -55,6 +55,15 @@ class SettingsTests(unittest.TestCase):
         ):
             self.assertTrue(settings.automatic_updates_enabled())
             self.assertTrue(settings.artwork_enabled())
+            self.assertTrue(settings.track_button_enabled())
+
+    def test_the_get_chunes_button_defaults_off(self):
+        # It advertises Chunes to whoever opens the profile rather than
+        # describing what is playing, so nobody gets it without asking.
+        with mock.patch.object(
+            settings.winreg, "OpenKey", side_effect=OSError("missing")
+        ):
+            self.assertFalse(settings.get_chunes_button_enabled())
 
 
 if __name__ == "__main__":
