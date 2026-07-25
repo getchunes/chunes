@@ -1,3 +1,5 @@
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -40,6 +42,10 @@ class PackageIdentityTests(unittest.TestCase):
 
 
 class StartupTaskTests(unittest.TestCase):
+    def setUp(self):
+        startup_task._cached = None
+        self.addCleanup(setattr, startup_task, "_cached", None)
+
     def test_projection_enumerators_map_to_winrt_state_names(self):
         cases = {
             "DISABLED": startup_task.DISABLED,
@@ -65,6 +71,57 @@ class StartupTaskTests(unittest.TestCase):
             self.assertFalse(startup_task.is_enabled())
             with self.assertRaises(startup_task.StartupTaskUnavailable):
                 startup_task.state()
+
+    def test_projection_failures_never_escape_as_their_own_type(self):
+        # pystray's tray thread is an STA and the projection raises a bare
+        # RuntimeError there, which used to break menu rendering.
+        apartment_error = RuntimeError(
+            "Cannot call blocking method from single-threaded apartment."
+        )
+        with mock.patch.object(startup_task, "_task", side_effect=apartment_error):
+            with self.assertRaises(startup_task.StartupTaskUnavailable):
+                startup_task.state()
+            self.assertFalse(startup_task.is_enabled())
+
+    def test_winrt_calls_never_run_on_the_calling_thread(self):
+        threads = []
+
+        def record():
+            threads.append(threading.current_thread())
+            return FakeState("ENABLED")
+
+        task = mock.Mock()
+        type(task).state = property(lambda self: record())
+        with mock.patch.object(startup_task, "_task", return_value=task):
+            self.assertEqual(startup_task.state(), startup_task.ENABLED)
+        self.assertEqual(len(threads), 1)
+        self.assertIsNot(threads[0], threading.current_thread())
+
+    def test_a_hung_projection_call_gives_up_instead_of_freezing_the_tray(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        with (
+            mock.patch.object(startup_task, "CALL_TIMEOUT_SECONDS", 0.1),
+            mock.patch.object(
+                startup_task, "_task", side_effect=lambda: release.wait(30)
+            ),
+        ):
+            with self.assertRaises(startup_task.StartupTaskUnavailable):
+                startup_task.state()
+
+    def test_the_menu_checkbox_reuses_a_fresh_answer(self):
+        task = mock.Mock()
+        task.state = FakeState("ENABLED")
+        with mock.patch.object(startup_task, "_task", return_value=task) as lookup:
+            self.assertTrue(startup_task.is_enabled())
+            self.assertTrue(startup_task.is_enabled())
+            lookup.assert_called_once_with()
+            startup_task._cached = (
+                time.monotonic() - startup_task.CACHE_SECONDS - 1,
+                startup_task.ENABLED,
+            )
+            self.assertTrue(startup_task.is_enabled())
+            self.assertEqual(lookup.call_count, 2)
 
     def test_enable_reports_the_state_windows_actually_settled_on(self):
         task = mock.Mock()

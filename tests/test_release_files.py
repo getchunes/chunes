@@ -726,8 +726,10 @@ class MsixPackagingTests(unittest.TestCase):
         self.assertEqual(extension.attrib["Category"], "windows.startupTask")
         task = extension.find("uap5:StartupTask", APPX_NS)
         self.assertEqual(task.attrib["TaskId"], startup_task.TASK_ID)
-        # Autostart stays opt in, exactly like the MSI build's Run value.
-        self.assertEqual(task.attrib["Enabled"], "false")
+        # Chunes is only useful while it is running, so autostart is on by
+        # default. Windows honors a later opt out across Store updates, and
+        # Settings and Task Manager can override the app either way.
+        self.assertEqual(task.attrib["Enabled"], "true")
 
     def test_every_declared_logo_ships_its_qualified_assets(self):
         visual = self.application.find("uap:VisualElements", APPX_NS)
