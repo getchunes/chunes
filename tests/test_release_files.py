@@ -173,6 +173,50 @@ class PackagingTests(unittest.TestCase):
                 )
                 self.assertEqual(custom.attrib["Value"], "0")
 
+    def test_a_fresh_install_starts_with_windows_but_an_upgrade_honors_opt_out(self):
+        component = self.product.find(".//w:Component[@Id='AutostartSetting']", WIX_NS)
+        self.assertEqual(component.attrib["Win64"], "yes")
+        self.assertEqual(
+            (component.find("w:Condition", WIX_NS).text or "").strip(),
+            'AUTOSTART = "1"',
+        )
+        value = component.find("w:RegistryValue", WIX_NS)
+        self.assertEqual(value.attrib["Root"], "HKCU")
+        self.assertEqual(
+            value.attrib["Key"], r"Software\Microsoft\Windows\CurrentVersion\Run"
+        )
+        self.assertEqual(value.attrib["Name"], "Chunes")
+        # Quoted so chunes.py parses it back to exactly one argument.
+        self.assertEqual(value.attrib["Value"], '"[#ChunesExe]"')
+
+        setting = self.product.find("w:Property[@Id='AUTOSTART']", WIX_NS)
+        self.assertEqual(setting.attrib["Value"], "1")
+        self.assertEqual(setting.attrib["Secure"], "yes")
+        search = self.product.find(
+            "w:Property[@Id='EXISTING_AUTOSTART']/w:RegistrySearch", WIX_NS
+        )
+        self.assertEqual(
+            search.attrib["Key"], r"Software\Microsoft\Windows\CurrentVersion\Run"
+        )
+        self.assertEqual(search.attrib["Name"], "Chunes")
+
+        opt_out = self.product.find(
+            "w:CustomAction[@Id='PreserveAutostartOptOut']", WIX_NS
+        )
+        self.assertEqual(opt_out.attrib["Property"], "AUTOSTART")
+        self.assertEqual(opt_out.attrib["Value"], "0")
+        # Only an existing installation can have opted out; a first install
+        # has no Run value yet and must still get one.
+        for sequence in ("InstallUISequence", "InstallExecuteSequence"):
+            with self.subTest(sequence=sequence):
+                scheduled = self.product.find(
+                    f"w:{sequence}/w:Custom[@Action='PreserveAutostartOptOut']", WIX_NS
+                )
+                self.assertEqual(scheduled.attrib["After"], "PreserveArtworkOptOut")
+                condition = " ".join((scheduled.text or "").split())
+                self.assertIn("EXISTING_INSTALL_PATH", condition)
+                self.assertIn("NOT EXISTING_AUTOSTART", condition)
+
     def test_album_art_installer_wording_is_service_neutral(self):
         checkbox = self.product.find(".//w:Control[@Id='Artwork']", WIX_NS)
         explanation = self.product.find(
