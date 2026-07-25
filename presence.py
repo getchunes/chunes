@@ -203,9 +203,11 @@ async def _handle_tab_report(reader, writer):
                 or hosts != old_hosts
                 or report["enabled"] != _tab_state["enabled"]
             ):
+                # Name the version: two supported protocols look identical
+                # from the outside, and only v5 can name a track's own page.
                 print(
-                    f"Extension report: enabled={report['enabled']}, "
-                    f"audible hosts={hosts}"
+                    f"Extension report (protocol {version}): "
+                    f"enabled={report['enabled']}, audible hosts={hosts}"
                 )
             _tab_state.clear()
             _tab_state.update(report)
