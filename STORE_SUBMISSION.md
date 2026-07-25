@@ -103,6 +103,12 @@ the MSI build are the same executable.
   for `HKCU` and `%LOCALAPPDATA%`. Nothing in the app writes to its install
   directory.
 
+## Listing copy
+
+Paste-ready Partner Center listing fields, certification notes, and product
+declarations are in [STORE_LISTING.md](STORE_LISTING.md). Update that file
+whenever the description would stop matching the app.
+
 ## Listing assets
 
 Store listing artwork lives in the private `getchunes/brand-assets` repository
