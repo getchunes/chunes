@@ -90,11 +90,37 @@ class PackagingTests(unittest.TestCase):
             variables["WixUIDialogBmp"],
             "$(var.ProjectDir)\\installer\\assets\\chunes-dialog.bmp",
         )
+        # Without this the stock WiX placeholder logo shows in every dialog banner.
+        self.assertEqual(
+            variables["WixUIBannerBmp"],
+            "$(var.ProjectDir)\\installer\\assets\\chunes-banner.bmp",
+        )
         bitmap = self.product.find("w:Binary[@Id='ChunesExitDialogBitmap']", WIX_NS)
         self.assertEqual(
             bitmap.attrib["SourceFile"],
             "$(var.ProjectDir)\\installer\\assets\\chunes-exit-dialog.bmp",
         )
+        for relative, width, height in (
+            ("installer/assets/chunes-banner.bmp", 493, 58),
+            ("installer/assets/chunes-dialog.bmp", 493, 312),
+        ):
+            with self.subTest(relative=relative):
+                header = (ROOT / relative).read_bytes()[:26]
+                self.assertEqual(header[:2], b"BM")
+                self.assertEqual(
+                    int.from_bytes(header[18:22], "little", signed=True), width
+                )
+                self.assertEqual(
+                    int.from_bytes(header[22:26], "little", signed=True), height
+                )
+
+        updates = self.product.find("w:Property[@Id='ARPURLUPDATEINFO']", WIX_NS)
+        comments = self.product.find("w:Property[@Id='ARPCOMMENTS']", WIX_NS)
+        self.assertEqual(
+            updates.attrib["Value"],
+            "https://github.com/getchunes/chunes/releases",
+        )
+        self.assertIn("Chune ID browser extension", comments.attrib["Value"])
 
     def test_first_install_privacy_checkboxes_and_opt_outs_are_authored(self):
         settings = (
