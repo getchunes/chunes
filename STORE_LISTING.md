@@ -220,16 +220,30 @@ and is never edited by hand. Package logos are a separate set and live in
 | Box art 2160 x 2160 | `assets/store/box-art-2160.png` | ready |
 | Box art 1080 x 1080 | `assets/store/box-art-1080.png` | ready |
 | Poster art 720 x 1080 | `assets/store/poster-art-720x1080.png` | ready |
-| Screenshots, 1366 x 768 or larger PNG | none yet | **required before submission** |
+| Screenshot, tray menu, 1920 x 1080 | `assets/store/screenshots/tray-menu-1920x1080.png` | ready |
 | Hero art 1920 x 1080 | none | optional, spotlight placement only |
 
-At least one screenshot is required. Two carry the whole product:
+Partner Center requires one screenshot and recommends four.
 
-1. The Discord activity card for a track that Chunes published, cropped to the
-   profile panel and scaled to 1920 x 1080 on a plain background.
-2. The tray menu open over the notification area, with the Chune ID state line
-   visible.
+Screenshots are generated, not pasted together by hand:
 
-A screenshot must not include a real Discord account name, avatar, friends list,
-or server list. The extension repository generates its store screenshot with
-`scripts/new-store-screenshot.ps1`; the same approach fits here.
+- `scripts/new-tray-capture.ps1` waits for the tray menu to open and saves that
+  popup window alone, at native resolution, to `assets/store/captures`. Popup
+  menus are their own top-level window, so no part of the desktop behind the
+  menu is captured.
+- `scripts/new-store-screenshot.ps1` places a capture on a card at a
+  whole-number scale, so the menu text stays crisp, and composes the branded
+  1920 x 1080 canvas around it.
+
+Two things to settle before the first submission:
+
+1. The committed capture comes from the MSI build, so it shows **Automatically
+   check for updates** and **Check for updates now**. The packaged build hides
+   both. Retake it from a self-signed MSIX install for a screenshot that matches
+   what a Store customer gets.
+2. The menu reads **Nothing playing**. Capturing it during playback shows the
+   published track instead, which is a better first impression.
+
+The obvious remaining screenshots are the Discord activity card for a track
+Chunes published, and the Chune ID popup next to the tray. A screenshot must
+never include a real Discord account name, avatar, friends list, or server list.
