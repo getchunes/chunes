@@ -177,6 +177,54 @@ every region. Two questions need care:
 | Has this product been tested for accessibility? | Leave unchecked. The tray menu has not been through an accessibility pass. |
 | Does this product allow purchases? | No. |
 
+## Restricted capability justification
+
+The manifest declares `rescap:Capability Name="runFullTrust"`, which every
+Desktop Bridge package needs, and Partner Center asks why. Paste this into the
+justification field. Keep it short; the field is read by a reviewer confirming
+the capability is inherent to a desktop app, not by an engineer.
+
+> Chunes is a Win32 desktop application packaged with the Desktop Bridge and
+> declared as `Windows.FullTrustApplication`, so `runFullTrust` is required for
+> it to run at all. It publishes the user's music as a Discord status by
+> connecting to the named pipe the locally installed Discord desktop app
+> creates, presents its only interface as a `Shell_NotifyIcon` tray menu, reads
+> playback state from Global System Media Transport Controls, and accepts
+> reports from its companion browser extension over loopback on 127.0.0.1. None
+> of that is available to an AppContainer process. Chunes requests no other
+> restricted capability, requires no administrator rights, and installs no
+> driver or service.
+
+If a reviewer comes back wanting specifics, this is the same answer broken out:
+
+> Chunes is a Win32 desktop application packaged with the Desktop Bridge. It is
+> a PyInstaller-built Python executable declared as
+> `Windows.FullTrustApplication`, so `runFullTrust` is required for the package
+> to run at all. Every use is ordinary desktop functionality:
+>
+> - Discord Rich Presence IPC. The product's whole purpose is publishing the
+>   user's listening status to the Discord desktop app on the same PC. Chunes
+>   does that by connecting to the named pipe \\.\pipe\discord-ipc-N that the
+>   locally installed, unpackaged Discord client creates. An AppContainer
+>   process cannot open a named pipe owned by an unpackaged desktop app.
+> - Notification-area icon and menu. Chunes has no main window. Its entire
+>   interface is a Shell_NotifyIcon tray icon with a Win32 context menu.
+> - Loopback listener. Chunes accepts JSON reports from its companion browser
+>   extension on 127.0.0.1:52846, which is how it knows which browser tab is
+>   playing. This means accepting inbound loopback connections from another
+>   local process.
+> - Windows media session data. Chunes reads track title, artist, and playback
+>   timing from Global System Media Transport Controls, and runs the CPython
+>   interpreter and native extension modules that PyInstaller bundles.
+>
+> Chunes requests no other restricted capability. It does not require
+> administrator rights, does not install or depend on a driver or NT service,
+> and writes only to its own per-user settings and log locations.
+
+If a related question asks whether the product communicates with software that
+is not from the Store, the answer is yes: the Discord desktop client and the
+Chune ID browser extension, both running locally.
+
 ## Notes for certification
 
 Paste this into the **Notes for certification** field. Chunes has no main window,
