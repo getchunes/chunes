@@ -455,14 +455,21 @@ def _http_get(url, headers=None):
 
 
 def _apple_music_track_url(value):
-    """The searched track's own Apple Music page, when the API returned one."""
+    """The searched track's own Apple Music page, when the API returned one.
+
+    Only the track selector is kept. The Search API appends its own `uo`
+    marker, and this link goes on a public profile rather than into an
+    analytics pipeline.
+    """
     if not isinstance(value, str) or not value:
         return None
     parsed = urllib.parse.urlsplit(value)
     hostname = (parsed.hostname or "").lower()
     if parsed.scheme != "https" or hostname != "music.apple.com":
         return None
-    return value
+    track = urllib.parse.parse_qs(parsed.query).get("i", [None])[0]
+    query = urllib.parse.urlencode({"i": track}) if track else ""
+    return urllib.parse.urlunsplit(("https", hostname, parsed.path, query, ""))
 
 
 def _find_apple_music_info(title, artist):

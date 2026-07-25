@@ -573,6 +573,24 @@ class TrackLinkTests(unittest.TestCase):
     def test_a_nameless_track_gets_no_link(self):
         self.assertIsNone(presence.track_link("soundcloud.com", None, "", ""))
 
+    def test_the_apple_link_keeps_only_the_track_selector(self):
+        # The Search API appends its own "uo" marker; this link goes on a
+        # public profile, not into an analytics pipeline.
+        cases = {
+            "https://music.apple.com/us/album/x/1?i=2&uo=4":
+                "https://music.apple.com/us/album/x/1?i=2",
+            "https://music.apple.com/us/album/x/1?uo=4":
+                "https://music.apple.com/us/album/x/1",
+            "https://music.apple.com/us/song/x/1": "https://music.apple.com/us/song/x/1",
+            "http://music.apple.com/us/album/x/1?i=2": None,
+            "https://evil.example.com/us/album/x/1?i=2": None,
+            "": None,
+            None: None,
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(presence._apple_music_track_url(raw), expected)
+
 
 class PresenceButtonTests(unittest.TestCase):
     def test_track_button_is_labelled_for_its_service(self):
