@@ -15,8 +15,10 @@ from pathlib import Path
 from PIL import Image
 import pystray
 
+import packaged
 import presence
 import settings
+import startup_task
 from updater import UpdateController
 from version import __version__
 
@@ -162,10 +164,16 @@ def _delete_autostart_command():
 
 
 def autostart_enabled():
+    if packaged.is_packaged():
+        return startup_task.is_enabled()
     return _command_is_current(_read_autostart_command())
 
 
 def migrate_legacy_autostart():
+    if packaged.is_packaged():
+        # The packaged build never owned a Run value to migrate, and its own
+        # install path changes with every Store update.
+        return False
     command = _read_autostart_command()
     if (
         getattr(sys, "frozen", False)
@@ -180,6 +188,8 @@ def migrate_legacy_autostart():
 
 
 def remove_owned_autostart():
+    if packaged.is_packaged():
+        return False
     command = _read_autostart_command()
     if _command_is_current(command) or _command_is_chunes_owned(command):
         _delete_autostart_command()
@@ -187,7 +197,35 @@ def remove_owned_autostart():
     return False
 
 
+def _open_startup_settings():
+    try:
+        os.startfile(startup_task.SETTINGS_URI)
+    except OSError as error:
+        print(f"Could not open the Startup apps settings page: {error}")
+
+
+def _toggle_packaged_autostart():
+    try:
+        if startup_task.is_enabled():
+            startup_task.disable()
+            return
+        result = startup_task.enable()
+    except startup_task.StartupTaskUnavailable as error:
+        print(f"Startup task is unavailable ({error}); opening Windows Settings.")
+        _open_startup_settings()
+        return
+    if result not in startup_task.ENABLED_STATES:
+        # Windows refuses the request once the user or a policy has turned
+        # Chunes off; only Settings can undo that.
+        print(f"Windows kept Chunes autostart {result}; opening Windows Settings.")
+        _open_startup_settings()
+
+
 def toggle_autostart(icon, item):
+    if packaged.is_packaged():
+        _toggle_packaged_autostart()
+        icon.update_menu()
+        return
     command = _read_autostart_command()
     if _command_is_current(command):
         _delete_autostart_command()
@@ -312,6 +350,42 @@ def _handle_installer_command():
     return False
 
 
+def build_menu_items(store_updates=None):
+    """Tray items, minus anything the Store build is not allowed to offer."""
+    if store_updates is None:
+        store_updates = packaged.is_packaged()
+    items = [
+        pystray.MenuItem(current_track_text, None, enabled=False),
+        pystray.MenuItem(extension_state_text, None, enabled=False),
+        pystray.MenuItem(version_text, None, enabled=False),
+        pystray.MenuItem("Start with Windows", toggle_autostart,
+                         checked=lambda item: autostart_enabled()),
+        pystray.Menu.SEPARATOR,
+    ]
+    if not store_updates:
+        # The Store updates the packaged build, so it never checks GitHub
+        # releases or offers to install one.
+        items += [
+            pystray.MenuItem(
+                "Automatically check for updates",
+                toggle_automatic_updates,
+                checked=lambda item: settings.automatic_updates_enabled(),
+            ),
+            pystray.MenuItem("Check for updates now", check_for_updates),
+        ]
+    items += [
+        pystray.MenuItem(
+            "Look up online album art",
+            toggle_artwork,
+            checked=lambda item: settings.artwork_enabled(),
+        ),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Open log", open_log),
+        pystray.MenuItem("Quit", quit_app),
+    ]
+    return items
+
+
 def main():
     global _updater
     _open_log()
@@ -320,6 +394,12 @@ def main():
     if not acquire_single_instance():
         print("Chunes is already running; the second instance is exiting.")
         return
+    store_updates = packaged.is_packaged()
+    if store_updates:
+        print(
+            f"Running from package {packaged.package_family_name()}; "
+            "the Store handles updates."
+        )
     migrate_legacy_autostart()
     _tray_stop.clear()
     threading.Thread(target=run_engine, daemon=True).start()
@@ -327,32 +407,12 @@ def main():
         APP_NAME,
         make_icon_image(),
         APP_NAME,
-        menu=pystray.Menu(
-            pystray.MenuItem(current_track_text, None, enabled=False),
-            pystray.MenuItem(extension_state_text, None, enabled=False),
-            pystray.MenuItem(version_text, None, enabled=False),
-            pystray.MenuItem("Start with Windows", toggle_autostart,
-                             checked=lambda item: autostart_enabled()),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "Automatically check for updates",
-                toggle_automatic_updates,
-                checked=lambda item: settings.automatic_updates_enabled(),
-            ),
-            pystray.MenuItem("Check for updates now", check_for_updates),
-            pystray.MenuItem(
-                "Look up online album art",
-                toggle_artwork,
-                checked=lambda item: settings.artwork_enabled(),
-            ),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Open log", open_log),
-            pystray.MenuItem("Quit", quit_app),
-        ),
+        menu=pystray.Menu(*build_menu_items(store_updates)),
     )
-    _updater = UpdateController(on_install=lambda: quit_app(icon, None))
-    if settings.automatic_updates_enabled():
-        _updater.start_automatic_check()
+    if not store_updates:
+        _updater = UpdateController(on_install=lambda: quit_app(icon, None))
+        if settings.automatic_updates_enabled():
+            _updater.start_automatic_check()
     try:
         icon.run(setup=setup_tray)
     finally:

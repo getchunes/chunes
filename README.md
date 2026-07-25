@@ -19,6 +19,24 @@ playback pauses, and labels both supported services correctly.
 
 ## Install
 
+Chunes ships through two channels. The Microsoft Store build updates itself
+through the Store. The MSI is the direct download and checks GitHub releases
+for updates. Both are the same application; pick whichever suits you.
+
+### Microsoft Store
+
+Search the Microsoft Store for **Chunes**, or install it from the Store
+listing. Store installs update automatically and do not show the GitHub update
+options in the tray menu. Autostart is managed by the manifest startup task, so
+Windows **Settings > Apps > Startup** can also turn it off.
+
+The `.msix` produced by the **Build Microsoft Store MSIX** workflow is a
+submission artifact for Partner Center. It is intentionally unsigned, because
+the Store signs it during certification, and it **cannot be sideloaded**. It is
+never attached to a GitHub release.
+
+### MSI
+
 1. Download `Chunes-<version>-x64.msi` from the
    [latest release](https://github.com/getchunes/chunes/releases/latest).
 2. Check the release-specific trust information below before running the MSI.

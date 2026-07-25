@@ -36,7 +36,7 @@ jobs:
       - name: Test
         run: |
           python -m pip check
-          python -m compileall -q chunes.py presence.py protocol.py settings.py updater.py version.py tests
+          python -m compileall -q chunes.py packaged.py presence.py protocol.py settings.py startup_task.py updater.py version.py tests
           python -m unittest discover -s tests -v
 
       - name: Get hash-locked WiX Toolset
@@ -87,4 +87,32 @@ jobs:
             if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
               throw "Normal CI output must be unsigned: $path ($($signature.Status))"
             }
+          }
+
+      - name: Build Microsoft Store MSIX
+        shell: pwsh
+        run: .\scripts\build-msix.ps1 -SkipExecutable
+
+      - name: Verify MSIX packaging
+        shell: pwsh
+        run: |
+          $version = (python -c "from version import __version__; print(__version__)").Trim()
+          $msix = "dist\Chunes-$version-x64.msix"
+          if (-not (Test-Path -LiteralPath $msix -PathType Leaf)) {
+            throw "Expected MSIX was not produced: $msix"
+          }
+          $extract = Join-Path $env:RUNNER_TEMP "ci-msix-extracted"
+          Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory((Resolve-Path -LiteralPath $msix).Path, $extract)
+          if (-not (Test-Path -LiteralPath (Join-Path $extract "resources.pri") -PathType Leaf)) {
+            throw "The package has no resource index, so qualified logos cannot resolve"
+          }
+          [xml]$manifest = Get-Content -LiteralPath (Join-Path $extract "AppxManifest.xml") -Raw
+          if ($manifest.Package.Identity.Version -cne "$version.0") {
+            throw "Package version is $($manifest.Package.Identity.Version), expected $version.0"
+          }
+          $payload = Join-Path $extract "Chunes.exe"
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $payload).Hash -cne (Get-FileHash -Algorithm SHA256 -LiteralPath "dist\Chunes.exe").Hash) {
+            throw "The package does not contain the exact built Chunes.exe"
           }

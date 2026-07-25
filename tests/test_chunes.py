@@ -183,5 +183,83 @@ class GracefulCloseTests(unittest.TestCase):
         destroy_window.assert_called_once_with(123)
 
 
+class PackagedTrayTests(unittest.TestCase):
+    def packaged(self, enabled=True):
+        return mock.patch.object(chunes.packaged, "is_packaged", return_value=enabled)
+
+    def test_the_run_key_is_never_touched_by_the_packaged_build(self):
+        with (
+            self.packaged(),
+            mock.patch.object(chunes, "_read_autostart_command") as read,
+            mock.patch.object(chunes, "_set_autostart_command") as write,
+            mock.patch.object(chunes, "_delete_autostart_command") as delete,
+            mock.patch.object(chunes.startup_task, "is_enabled", return_value=True),
+            mock.patch.object(chunes.startup_task, "disable") as disable,
+        ):
+            self.assertTrue(chunes.autostart_enabled())
+            self.assertFalse(chunes.migrate_legacy_autostart())
+            self.assertFalse(chunes.remove_owned_autostart())
+            chunes.toggle_autostart(mock.Mock(), None)
+        disable.assert_called_once_with()
+        read.assert_not_called()
+        write.assert_not_called()
+        delete.assert_not_called()
+
+    def test_a_refused_startup_request_sends_the_user_to_windows_settings(self):
+        cases = (
+            (chunes.startup_task.DISABLED_BY_USER, True),
+            (chunes.startup_task.ENABLED, False),
+        )
+        for result, expect_settings in cases:
+            with self.subTest(result=result):
+                with (
+                    self.packaged(),
+                    mock.patch.object(
+                        chunes.startup_task, "is_enabled", return_value=False
+                    ),
+                    mock.patch.object(
+                        chunes.startup_task, "enable", return_value=result
+                    ),
+                    mock.patch.object(chunes, "_open_startup_settings") as settings,
+                    mock.patch("builtins.print"),
+                ):
+                    chunes.toggle_autostart(mock.Mock(), None)
+                self.assertEqual(settings.called, expect_settings)
+
+    def test_an_unavailable_startup_task_opens_windows_settings(self):
+        with (
+            self.packaged(),
+            mock.patch.object(chunes.startup_task, "is_enabled", return_value=False),
+            mock.patch.object(
+                chunes.startup_task,
+                "enable",
+                side_effect=chunes.startup_task.StartupTaskUnavailable("no package"),
+            ),
+            mock.patch.object(chunes, "_open_startup_settings") as settings,
+            mock.patch("builtins.print"),
+        ):
+            chunes.toggle_autostart(mock.Mock(), None)
+        settings.assert_called_once_with()
+
+    def test_the_packaged_menu_drops_the_github_update_items(self):
+        def labels(store_updates):
+            return [
+                item.text
+                for item in chunes.build_menu_items(store_updates=store_updates)
+                if isinstance(item.text, str)
+            ]
+
+        unpackaged = labels(False)
+        store = labels(True)
+        self.assertIn("Check for updates now", unpackaged)
+        self.assertIn("Automatically check for updates", unpackaged)
+        self.assertNotIn("Check for updates now", store)
+        self.assertNotIn("Automatically check for updates", store)
+        # Everything the Store build still owns has to survive.
+        for kept in ("Start with Windows", "Look up online album art", "Open log", "Quit"):
+            with self.subTest(kept=kept):
+                self.assertIn(kept, store)
+
+
 if __name__ == "__main__":
     unittest.main()
