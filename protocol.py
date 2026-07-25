@@ -15,14 +15,22 @@ MAX_HOST_CHARS = 253
 MAX_TITLE_CHARS = 512
 MAX_MEDIA_ID_CHARS = 11
 MAX_ARTWORK_URL_CHARS = 2048
+MAX_TRACK_URL_CHARS = 2048
 MAX_PLAYBACK_SECONDS = 24 * 60 * 60
 MAX_SAMPLED_AT_MS = 8.64e15  # largest epoch a JavaScript Date can represent
 REPORT_TTL_SECONDS = 90
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
+# A released extension keeps sending v4 until its browser updates, and the
+# store build lags the desktop build by however long review takes, so both
+# versions stay accepted and the response echoes whichever one arrived.
+SUPPORTED_PROTOCOL_VERSIONS = (4, 5)
 
 REPORT_KEYS = {"enabled", "services", "tabs"}
 PROTOCOL_KEY = "protocol"
 TAB_KEYS = {"host", "mediaId", "title"}
+# The playing tab's own address, so the presence button can open the track
+# instead of a search for it. Added in v5.
+TRACK_URL_KEY = "trackUrl"
 # Page-level playback timing measured by the extension (MusicKit). Only the
 # Apple Music web player needs it: its OS media session misreports position
 # and duration, while SoundCloud/YTM are already correct without help.
@@ -121,6 +129,30 @@ def _validate_tab_playback(tab, host):
     }
 
 
+def _validate_track_url(tab, host, version):
+    """Validated address of the playing page, if a v5 report supplied one."""
+    if TRACK_URL_KEY not in tab:
+        return {}
+    if version < 5:
+        raise ProtocolError(400, "Unexpected tab URL")
+    track_url = tab[TRACK_URL_KEY]
+    if track_url is None:
+        return {}
+    if not isinstance(track_url, str) or not 0 < len(track_url) <= MAX_TRACK_URL_CHARS:
+        raise ProtocolError(400, "Invalid tab URL")
+    parsed = urlsplit(track_url)
+    # The tab may only describe where it already is; a link anywhere else
+    # would put an address of the page's choosing on the user's profile.
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or (parsed.hostname or "").lower() != host
+    ):
+        raise ProtocolError(400, "Invalid tab URL")
+    return {TRACK_URL_KEY: track_url}
+
+
 def _validate_page_metadata(tab, host):
     """Validated current page Media Session metadata, if supplied."""
     metadata = tab.get(PAGE_METADATA_KEY)
@@ -171,12 +203,22 @@ def _validate_page_metadata(tab, host):
     }
 
 
-def validate_report(value):
-    """Return a detached report after validating the exact v4 schema."""
+def validate_report(value, include_version=False):
+    """Return a detached report after validating the v4 or v5 schema.
+
+    Compatibility is intentionally localized here: v5 adds the playing tab's
+    own address, and v4 is the shape the store build still sends. Drop the v4
+    branch when its supported-release window ends.
+    """
     if not isinstance(value, dict):
         raise ProtocolError(400, "Invalid report object")
-    if set(value) != REPORT_KEYS | {PROTOCOL_KEY} or value[PROTOCOL_KEY] != PROTOCOL_VERSION:
+    if (
+        set(value) != REPORT_KEYS | {PROTOCOL_KEY}
+        or type(value[PROTOCOL_KEY]) is not int
+        or value[PROTOCOL_KEY] not in SUPPORTED_PROTOCOL_VERSIONS
+    ):
         raise ProtocolError(400, "Invalid report object")
+    version = value[PROTOCOL_KEY]
     if type(value["enabled"]) is not bool:
         raise ProtocolError(400, "Invalid enabled value")
 
@@ -191,7 +233,7 @@ def validate_report(value):
         raise ProtocolError(400, "Invalid tabs value")
 
     clean_tabs = []
-    optional_keys = PLAYBACK_KEYS | {PAGE_METADATA_KEY}
+    optional_keys = PLAYBACK_KEYS | {PAGE_METADATA_KEY, TRACK_URL_KEY}
     for tab in tabs:
         if not isinstance(tab, dict) or not TAB_KEYS <= set(tab) <= TAB_KEYS | optional_keys:
             raise ProtocolError(400, "Invalid tab object")
@@ -217,9 +259,10 @@ def validate_report(value):
         clean_tab = {"host": host, "mediaId": media_id, "title": title}
         clean_tab.update(_validate_tab_playback(tab, host))
         clean_tab.update(_validate_page_metadata(tab, host))
+        clean_tab.update(_validate_track_url(tab, host, version))
         clean_tabs.append(clean_tab)
 
-    return {
+    report = {
         "enabled": value["enabled"],
         "services": {
             "appleMusic": services["appleMusic"],
@@ -228,9 +271,10 @@ def validate_report(value):
         },
         "tabs": clean_tabs,
     }
+    return (report, version) if include_version else report
 
 
-def parse_report_body(body):
+def parse_report_body(body, include_version=False):
     if not body or len(body) > MAX_BODY_BYTES:
         raise ProtocolError(400, "Invalid body size")
     try:
@@ -241,7 +285,7 @@ def parse_report_body(body):
         )
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProtocolError(400, "Invalid JSON") from exc
-    return validate_report(value)
+    return validate_report(value, include_version)
 
 
 def parse_request_head(raw_head):

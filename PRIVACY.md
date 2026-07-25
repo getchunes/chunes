@@ -19,13 +19,16 @@ Controls:
 The Chune ID browser extension sends Chunes an `application/json` report over
 the loopback interface at `127.0.0.1:52846`. That report contains the
 extension's master enabled state, the SoundCloud, YouTube Music, and Apple Music
-enabled states, and the host and title of reported audible tabs. Protocol 4
-reports can also carry the current page Media Session title, artist, and a
+enabled states, and the host and title of reported audible tabs. Protocol 4 and
+5 reports can also carry the current page Media Session title, artist, and a
 provider-hosted artwork URL for the supported audible tab. YouTube Music reports
 can additionally contain the watch page's 11-character public video ID. Apple
-Music reports carry bounds-checked MusicKit timing. The report does not contain
+Music reports carry bounds-checked MusicKit timing. Protocol 5 reports can carry
+the address of the reported audible tab itself, which Chunes accepts only when
+it is an `https` address on that same tab's host. The report does not contain
 general browsing history, page body contents, cookies, account credentials, or
-full URLs. Loopback reports are held in memory and expire after 90 seconds.
+the addresses of any other tab. Loopback reports are held in memory and expire
+after 90 seconds.
 
 Chunes stores these items on the PC:
 
@@ -52,6 +55,15 @@ IPC interface. Discord decides how that activity is processed and displayed.
 Discord's privacy policy applies:
 
 https://discord.com/privacy
+
+When **Show "Play on..." button** is checked, Chunes also sends a link that
+opens the current track on its own service. That link is the reported tab's own
+address when Chune ID supplied one, and otherwise a link Chunes builds from the
+public video ID, the Apple Search result, or a search for the track title and
+artist. When **Show "Get Chunes" button** is checked, Chunes sends a second link
+to the Chune ID listing on the Chrome Web Store. Both buttons appear on the
+Discord profile for anyone who views it, and both are stopped by unchecking the
+matching tray setting.
 
 To stop this transfer for supported browser services, turn off the Chune ID
 master switch or the relevant service switch. To stop all Discord presence,

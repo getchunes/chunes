@@ -276,6 +276,18 @@ def toggle_artwork(icon, item):
     icon.update_menu()
 
 
+def toggle_track_button(icon, item):
+    settings.set_track_button_enabled(not settings.track_button_enabled())
+    icon.update_menu()
+
+
+def toggle_get_chunes_button(icon, item):
+    settings.set_get_chunes_button_enabled(
+        not settings.get_chunes_button_enabled()
+    )
+    icon.update_menu()
+
+
 def quit_app(icon, item):
     _tray_stop.set()
     icon.stop()
@@ -378,6 +390,16 @@ def build_menu_items(store_updates=None):
             "Look up online album art",
             toggle_artwork,
             checked=lambda item: settings.artwork_enabled(),
+        ),
+        pystray.MenuItem(
+            'Show "Play on..." button',
+            toggle_track_button,
+            checked=lambda item: settings.track_button_enabled(),
+        ),
+        pystray.MenuItem(
+            'Show "Get Chunes" button',
+            toggle_get_chunes_button,
+            checked=lambda item: settings.get_chunes_button_enabled(),
         ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Open log", open_log),

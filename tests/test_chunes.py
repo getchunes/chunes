@@ -256,9 +256,36 @@ class PackagedTrayTests(unittest.TestCase):
         self.assertNotIn("Check for updates now", store)
         self.assertNotIn("Automatically check for updates", store)
         # Everything the Store build still owns has to survive.
-        for kept in ("Start with Windows", "Look up online album art", "Open log", "Quit"):
+        for kept in (
+            "Start with Windows",
+            "Look up online album art",
+            'Show "Play on..." button',
+            'Show "Get Chunes" button',
+            "Open log",
+            "Quit",
+        ):
             with self.subTest(kept=kept):
                 self.assertIn(kept, store)
+
+    def test_the_button_items_toggle_their_settings(self):
+        cases = (
+            (chunes.toggle_track_button, "track_button_enabled", "set_track_button_enabled"),
+            (
+                chunes.toggle_get_chunes_button,
+                "get_chunes_button_enabled",
+                "set_get_chunes_button_enabled",
+            ),
+        )
+        for toggle, reader, writer in cases:
+            with self.subTest(toggle=toggle.__name__):
+                icon = mock.Mock()
+                with (
+                    mock.patch.object(chunes.settings, reader, return_value=False),
+                    mock.patch.object(chunes.settings, writer) as write,
+                ):
+                    toggle(icon, None)
+                write.assert_called_once_with(True)
+                icon.update_menu.assert_called_once_with()
 
 
 if __name__ == "__main__":
