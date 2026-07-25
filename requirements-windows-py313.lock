@@ -5,6 +5,7 @@ pystray==0.19.5 --hash=sha256:a0c2229d02cf87207297c22d86ffc57c86c227517b038c0d3c
 six==1.17.0 --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
 typing_extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
 winrt-runtime==3.2.1 --hash=sha256:3c1fdcaeedeb2920dc3b9039db64089a6093cad2be56a3e64acc938849245a6d
+winrt-Windows.ApplicationModel==3.2.1 --hash=sha256:bc849feca3d428aee5d54cecdb580e4a2cc38cc897fae83e8c88ba9e673b00cd
 winrt-Windows.Foundation==3.2.1 --hash=sha256:6e98617c1e46665c7a56ce3f5d28e252798416d1ebfee3201267a644a4e3c479
 winrt-Windows.Foundation.Collections==3.2.1 --hash=sha256:5e12a6e75036ee90484c33e204b85fb6785fcc9e7c8066ad65097301f48cdd10
 winrt-Windows.Media==3.2.1 --hash=sha256:3903ecde3c46abfe1f0572f7a95d205550dea19f7f229186cb89eb309ba26d45

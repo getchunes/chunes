@@ -9,6 +9,15 @@ from version import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
 WIX_NS = {"w": "http://schemas.microsoft.com/wix/2006/wi"}
+APPX_NS = {
+    "p": "http://schemas.microsoft.com/appx/manifest/foundation/windows10",
+    "uap": "http://schemas.microsoft.com/appx/manifest/uap/windows10",
+    "uap5": "http://schemas.microsoft.com/appx/manifest/uap/windows10/5",
+    "rescap": (
+        "http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+        "/restrictedcapabilities"
+    ),
+}
 
 
 class CanonicalAssetTests(unittest.TestCase):
@@ -656,6 +665,161 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('product-name="Chunes"', config)
         self.assertIn('product-version="${version}.0"', config)
         self.assertEqual(config.count("<authenticode-sign/>"), 2)
+
+
+class MsixPackagingTests(unittest.TestCase):
+    MANIFEST = ROOT / "installer" / "msix" / "AppxManifest.xml"
+    ASSETS = ROOT / "installer" / "msix" / "assets"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.package = ET.parse(cls.MANIFEST).getroot()
+        cls.identity = cls.package.find("p:Identity", APPX_NS)
+        cls.application = cls.package.find(
+            "p:Applications/p:Application", APPX_NS
+        )
+
+    def test_package_version_tracks_version_module(self):
+        # Partner Center reserves the fourth part and never lets a version
+        # number be reused, so this has to stay exact.
+        self.assertEqual(self.identity.attrib["Version"], f"{__version__}.0")
+
+    def test_identity_matches_the_reserved_partner_center_product(self):
+        self.assertEqual(self.identity.attrib["Name"], "dubsector.dev.Chunes")
+        self.assertEqual(
+            self.identity.attrib["Publisher"],
+            "CN=75E3A6B2-AC96-45EC-9B42-5EB66C83F2D2",
+        )
+        self.assertEqual(self.identity.attrib["ProcessorArchitecture"], "x64")
+        properties = self.package.find("p:Properties", APPX_NS)
+        self.assertEqual(
+            properties.find("p:PublisherDisplayName", APPX_NS).text, "dubsector.dev"
+        )
+
+    def test_runtime_detects_the_declared_package_identity(self):
+        import packaged
+
+        self.assertEqual(
+            packaged.PACKAGE_IDENTITY_NAME, self.identity.attrib["Name"]
+        )
+
+    def test_full_trust_desktop_application_is_declared(self):
+        self.assertEqual(self.application.attrib["Executable"], "Chunes.exe")
+        self.assertEqual(
+            self.application.attrib["EntryPoint"], "Windows.FullTrustApplication"
+        )
+        capability = self.package.find(
+            "p:Capabilities/rescap:Capability", APPX_NS
+        )
+        self.assertEqual(capability.attrib["Name"], "runFullTrust")
+        family = self.package.find(
+            "p:Dependencies/p:TargetDeviceFamily", APPX_NS
+        )
+        self.assertEqual(family.attrib["Name"], "Windows.Desktop")
+
+    def test_autostart_is_a_manifest_startup_task_the_tray_can_toggle(self):
+        import startup_task
+
+        extension = self.application.find(
+            "p:Extensions/uap5:Extension", APPX_NS
+        )
+        self.assertEqual(extension.attrib["Category"], "windows.startupTask")
+        task = extension.find("uap5:StartupTask", APPX_NS)
+        self.assertEqual(task.attrib["TaskId"], startup_task.TASK_ID)
+        # Chunes is only useful while it is running, so autostart is on by
+        # default. Windows honors a later opt out across Store updates, and
+        # Settings and Task Manager can override the app either way.
+        self.assertEqual(task.attrib["Enabled"], "true")
+
+    def test_every_declared_logo_ships_its_qualified_assets(self):
+        visual = self.application.find("uap:VisualElements", APPX_NS)
+        tile = visual.find("uap:DefaultTile", APPX_NS)
+        logos = [
+            self.package.find("p:Properties/p:Logo", APPX_NS).text,
+            visual.attrib["Square44x44Logo"],
+            visual.attrib["Square150x150Logo"],
+            tile.attrib["Square71x71Logo"],
+            tile.attrib["Wide310x150Logo"],
+        ]
+        for logo in logos:
+            with self.subTest(logo=logo):
+                self.assertTrue(logo.startswith("assets\\"))
+                stem = Path(logo.replace("\\", "/")).stem
+                scaled = sorted(self.ASSETS.glob(f"{stem}.scale-*.png"))
+                self.assertIn(
+                    self.ASSETS / f"{stem}.scale-100.png", scaled
+                )
+                self.assertGreaterEqual(len(scaled), 5)
+
+        # The app list and taskbar resolve target sizes rather than scales.
+        for size in (16, 24, 32, 48, 256):
+            with self.subTest(size=size):
+                for name in (
+                    f"Square44x44Logo.targetsize-{size}.png",
+                    f"Square44x44Logo.targetsize-{size}_altform-unplated.png",
+                ):
+                    self.assertTrue((self.ASSETS / name).is_file())
+
+    def test_build_script_rewrites_only_the_version_and_indexes_all_scales(self):
+        script = (ROOT / "scripts" / "build-msix.ps1").read_text(encoding="utf-8")
+        self.assertIn('$packageVersion = "$version.0"', script)
+        self.assertIn("$identity.Version = $packageVersion", script)
+        # Splitting scales into resource packs only works inside a bundle.
+        self.assertIn("$priDocument.resources.RemoveChild($packagingNode)", script)
+        self.assertIn("makeappx.exe", script)
+        self.assertIn("makepri.exe", script)
+        # A signature applied locally is rejected by Partner Center.
+        self.assertIn("[switch]$SelfSign", script)
+        self.assertIn("Development sideloading only", script)
+
+    def test_store_workflow_stages_an_unsigned_package_without_publishing(self):
+        workflow = (ROOT / ".github" / "workflows" / "release-msix.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotRegex(workflow, re.compile(r"^\s+push:\s*$", re.MULTILINE))
+        self.assertIn("permissions: {}", workflow)
+        self.assertIn("group: store-package", workflow)
+        self.assertIn("refs/heads/main", workflow)
+        self.assertIn("--require-hashes --only-binary=:all:", workflow)
+        self.assertIn("python -m unittest discover -s tests -v", workflow)
+        self.assertIn("Store packages must be uploaded unsigned", workflow)
+        self.assertIn("SignatureStatus]::NotSigned", workflow)
+        self.assertIn("does not contain the exact freshly built Chunes.exe", workflow)
+        self.assertIn('"Chunes-$env:RELEASE_VERSION-x64.msix"', workflow)
+        self.assertIn("store/v$env:RELEASE_VERSION", workflow)
+        self.assertIn("already submitted to the Store", workflow)
+        # Store packages are staged for Partner Center, never released here.
+        for forbidden in (
+            "gh release",
+            "git/refs",
+            "contents: write",
+            "signpath/github-action",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, workflow)
+
+    def test_ci_builds_and_checks_the_store_package_on_every_change(self):
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("build-msix.ps1 -SkipExecutable", workflow)
+        self.assertIn('dist\\Chunes-$version-x64.msix', workflow)
+        self.assertIn("resources.pri", workflow)
+
+    def test_store_path_is_documented_next_to_the_msi_path(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        submission = (ROOT / "STORE_SUBMISSION.md").read_text(encoding="utf-8")
+        combined = " ".join((readme + submission).split())
+        for required in (
+            "Microsoft Store",
+            "Build Microsoft Store MSIX",
+            "cannot be sideloaded",
+            "store/v",
+            "Partner Center",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, combined)
 
 
 if __name__ == "__main__":
