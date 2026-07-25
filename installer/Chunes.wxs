@@ -3,7 +3,7 @@
   xmlns="http://schemas.microsoft.com/wix/2006/wi"
   xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <?ifndef ProductVersion ?>
-    <?define ProductVersion="1.0.11" ?>
+    <?define ProductVersion="1.0.12" ?>
   <?endif ?>
   <?ifndef SourceDir ?>
     <?define SourceDir="..\dist" ?>
@@ -25,7 +25,9 @@
       InstallScope="perUser"
       InstallPrivileges="limited"
       Platform="x64"
-      Description="Chunes Discord music presence" />
+      Description="Chunes Discord music presence"
+      Comments="Shows SoundCloud, YouTube Music, and Apple Music browser playback as a Discord Listening activity."
+      Keywords="Chunes,Discord,music,presence,SoundCloud,YouTube Music,Apple Music" />
 
     <MajorUpgrade
       Schedule="afterInstallInitialize"
@@ -44,6 +46,12 @@
     <Property Id="ARPPUBLISHER" Value="https://github.com/getchunes" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/getchunes/chunes" />
     <Property Id="ARPHELPLINK" Value="https://github.com/getchunes/chunes/issues" />
+    <Property
+      Id="ARPURLUPDATEINFO"
+      Value="https://github.com/getchunes/chunes/releases" />
+    <Property
+      Id="ARPCOMMENTS"
+      Value="Shows SoundCloud, YouTube Music, and Apple Music browser playback as a Discord Listening activity. Needs the Chune ID browser extension." />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <Property
       Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
@@ -155,6 +163,9 @@
     <WixVariable
       Id="WixUIDialogBmp"
       Value="$(var.ProjectDir)\installer\assets\chunes-dialog.bmp" />
+    <WixVariable
+      Id="WixUIBannerBmp"
+      Value="$(var.ProjectDir)\installer\assets\chunes-banner.bmp" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="LocalAppDataFolder">
