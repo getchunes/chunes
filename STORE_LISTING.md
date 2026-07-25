@@ -181,7 +181,21 @@ every region. Two questions need care:
 
 The manifest declares `rescap:Capability Name="runFullTrust"`, which every
 Desktop Bridge package needs, and Partner Center asks why. Paste this into the
-justification field.
+justification field. Keep it short; the field is read by a reviewer confirming
+the capability is inherent to a desktop app, not by an engineer.
+
+> Chunes is a Win32 desktop application packaged with the Desktop Bridge and
+> declared as `Windows.FullTrustApplication`, so `runFullTrust` is required for
+> it to run at all. It publishes the user's music as a Discord status by
+> connecting to the named pipe the locally installed Discord desktop app
+> creates, presents its only interface as a `Shell_NotifyIcon` tray menu, reads
+> playback state from Global System Media Transport Controls, and accepts
+> reports from its companion browser extension over loopback on 127.0.0.1. None
+> of that is available to an AppContainer process. Chunes requests no other
+> restricted capability, requires no administrator rights, and installs no
+> driver or service.
+
+If a reviewer comes back wanting specifics, this is the same answer broken out:
 
 > Chunes is a Win32 desktop application packaged with the Desktop Bridge. It is
 > a PyInstaller-built Python executable declared as
