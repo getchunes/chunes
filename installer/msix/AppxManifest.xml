@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   Identity/@Version is the only value scripts/build-msix.ps1 rewrites, and it
   always becomes "<version.py>.0". The Microsoft Store reserves the fourth
@@ -15,7 +15,7 @@
   <Identity
     Name="dubsector.dev.Chunes"
     Publisher="CN=75E3A6B2-AC96-45EC-9B42-5EB66C83F2D2"
-    Version="1.0.14.0"
+    Version="1.0.15.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
