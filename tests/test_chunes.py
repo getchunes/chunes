@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import unittest
 from unittest import mock
 
@@ -88,7 +88,7 @@ class TrayStatusTests(unittest.TestCase):
         chunes.presence.set_status(track="Song - Artist", extension_enabled=True)
         self.assertEqual(chunes.current_track_text(), "Song - Artist")
         self.assertEqual(chunes.extension_state_text(), "Chune ID: on")
-        self.assertEqual(chunes.version_text(), "Chunes v1.0.14")
+        self.assertEqual(chunes.version_text(), "Chunes v1.0.15")
 
         chunes.presence.set_status(track=None, extension_enabled=False)
         self.assertEqual(chunes.current_track_text(), "Nothing playing")
@@ -96,7 +96,7 @@ class TrayStatusTests(unittest.TestCase):
 
         chunes.presence.set_status(extension_enabled=None)
         self.assertEqual(chunes.extension_state_text(), "Chune ID: not connected")
-        self.assertEqual(chunes.version_text(), "Chunes v1.0.14")
+        self.assertEqual(chunes.version_text(), "Chunes v1.0.15")
 
     def test_status_change_refreshes_the_native_menu(self):
         old = {"track": None, "extension_enabled": None}
@@ -266,6 +266,59 @@ class PackagedTrayTests(unittest.TestCase):
         ):
             with self.subTest(kept=kept):
                 self.assertIn(kept, store)
+
+    def test_the_packaged_log_lives_at_the_virtualization_target(self):
+        family = "dubsector.dev.Chunes_0r43qeyp9fzw6"
+        with mock.patch.object(
+            chunes.packaged, "package_family_name", return_value=family
+        ):
+            log_dir = chunes._log_dir()
+        # "Open log" hands this path to an unpackaged process, so it must be
+        # the real on-disk location, not the virtualized %LOCALAPPDATA% view.
+        self.assertEqual(
+            log_dir.parts[-5:],
+            ("Packages", family, "LocalCache", "Local", "Chunes"),
+        )
+
+    def test_the_unpackaged_log_stays_in_localappdata(self):
+        with mock.patch.object(
+            chunes.packaged, "package_family_name", return_value=None
+        ):
+            log_dir = chunes._log_dir()
+        self.assertEqual(log_dir.parts[-1], "Chunes")
+        self.assertNotIn("Packages", log_dir.parts)
+
+
+class TrayIntroTests(unittest.TestCase):
+    def test_the_first_launch_notifies_once_and_remembers(self):
+        icon = mock.Mock()
+        with (
+            mock.patch.object(chunes.settings, "tray_intro_shown", return_value=False),
+            mock.patch.object(chunes.settings, "set_tray_intro_shown") as remember,
+        ):
+            chunes._show_tray_intro(icon)
+        icon.notify.assert_called_once_with(chunes.TRAY_INTRO_MESSAGE, chunes.APP_NAME)
+        remember.assert_called_once_with()
+
+    def test_later_launches_stay_quiet(self):
+        icon = mock.Mock()
+        with (
+            mock.patch.object(chunes.settings, "tray_intro_shown", return_value=True),
+            mock.patch.object(chunes.settings, "set_tray_intro_shown") as remember,
+        ):
+            chunes._show_tray_intro(icon)
+        icon.notify.assert_not_called()
+        remember.assert_not_called()
+
+    def test_a_failed_notification_is_not_remembered_or_fatal(self):
+        icon = mock.Mock()
+        icon.notify.side_effect = OSError("no notification area")
+        with (
+            mock.patch.object(chunes.settings, "tray_intro_shown", return_value=False),
+            mock.patch.object(chunes.settings, "set_tray_intro_shown") as remember,
+        ):
+            chunes._show_tray_intro(icon)
+        remember.assert_not_called()
 
     def test_the_button_items_toggle_their_settings(self):
         cases = (

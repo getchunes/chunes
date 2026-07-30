@@ -25,7 +25,19 @@ from version import __version__
 APP_NAME = "Chunes"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
-LOG_DIR = Path(os.environ.get("LOCALAPPDATA", ".")) / APP_NAME
+def _log_dir():
+    local = Path(os.environ.get("LOCALAPPDATA", "."))
+    family = packaged.package_family_name()
+    if family is None:
+        return local / APP_NAME
+    # MSIX virtualization redirects %LOCALAPPDATA% writes into the package's
+    # LocalCache, but "Open log" hands the path to an outside process that
+    # only sees the real filesystem. Log straight to the redirect target so
+    # both views agree on where the file is.
+    return local / "Packages" / family / "LocalCache" / "Local" / APP_NAME
+
+
+LOG_DIR = _log_dir()
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "chunes.log"
 
@@ -330,9 +342,27 @@ def _register_close_messages(icon):
     icon._message_handlers[0x0016] = on_endsession
 
 
+TRAY_INTRO_MESSAGE = (
+    "Chunes is running in the system tray. "
+    "Right-click the tray icon for status and settings."
+)
+
+
+def _show_tray_intro(icon):
+    if settings.tray_intro_shown():
+        return
+    try:
+        icon.notify(TRAY_INTRO_MESSAGE, APP_NAME)
+    except OSError:
+        # A notification is nice to have; never take the tray down over it.
+        return
+    settings.set_tray_intro_shown()
+
+
 def setup_tray(icon):
     icon.visible = True
     _register_close_messages(icon)
+    _show_tray_intro(icon)
     threading.Thread(
         target=refresh_dynamic_menu,
         args=(icon, _tray_stop),

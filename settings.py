@@ -8,6 +8,7 @@ AUTO_UPDATE_VALUE = "AutomaticallyCheckForUpdates"
 ARTWORK_VALUE = "LookUpOnlineCoverArt"
 TRACK_BUTTON_VALUE = "ShowTrackButton"
 GET_CHUNES_BUTTON_VALUE = "ShowGetChunesButton"
+TRAY_INTRO_VALUE = "TrayIntroShown"
 
 
 def get_bool(name, default=True):
@@ -60,3 +61,13 @@ def get_chunes_button_enabled():
 
 def set_get_chunes_button_enabled(enabled):
     set_bool(GET_CHUNES_BUTTON_VALUE, enabled)
+
+
+# The app has no window, so the first launch shows a one-time notification
+# pointing at the tray icon.
+def tray_intro_shown():
+    return get_bool(TRAY_INTRO_VALUE, default=False)
+
+
+def set_tray_intro_shown():
+    set_bool(TRAY_INTRO_VALUE, True)
