@@ -4,6 +4,10 @@
 
 [![Chunes release](https://img.shields.io/github/v/release/getchunes/chunes?label=Chunes)](https://github.com/getchunes/chunes/releases/latest) [![Chune ID on the Chrome Web Store](https://img.shields.io/chrome-web-store/v/ofbfkbhgfhoapckgjcpmcohbhnogpfjd?label=Chune%20ID)](https://chromewebstore.google.com/detail/chune-id/ofbfkbhgfhoapckgjcpmcohbhnogpfjd)
 
+<a href="https://apps.microsoft.com/detail/9N7DTVS01C6Z?hl=en-us&gl=US&ocid=pdpshare">
+	<img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200"/>
+</a>
+
 Chunes shows SoundCloud and YouTube Music playback as a Discord **Listening to**
 status on Windows. It runs in the notification area, clears the status when
 playback pauses, and labels both supported services correctly.
