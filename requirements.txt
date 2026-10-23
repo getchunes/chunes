@@ -1,4 +1,4 @@
-Pillow==12.3.0
+Pillow==13.0.0
 pypresence==4.6.2
 pystray==0.19.5
 six==1.17.0
