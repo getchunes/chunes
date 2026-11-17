@@ -16,9 +16,10 @@ logs, issues, pull requests, release notes, or screenshots.
    `Cargo.toml`, then run `cargo build` so `Cargo.lock` follows. `Cargo.toml`
    is the single build version source: `build.rs` derives the executable's
    four-part file and product versions from it, and the build scripts and
-   workflows read it through `scripts/get-version.ps1`. Synchronize
-   `version.py` (until the Python sources are removed) and the fallback
-   `ProductVersion` in `installer/Chunes.wxs` with it.
+   workflows read it through `scripts/get-version.ps1`. Synchronize the
+   fallback `ProductVersion` in `installer/Chunes.wxs` and the `Identity`
+   `Version` in `installer/msix/AppxManifest.xml` (as `x.y.z.0`) with it;
+   `tests/release_files.rs` fails `cargo test` when they disagree.
 2. Preserve installer UpgradeCode
    `{2DDF67BD-FBDE-4BDF-A090-F1552C2C1330}` exactly so the release upgrades
    prior versions.
