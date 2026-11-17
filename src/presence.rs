@@ -10,8 +10,6 @@
 
 use std::path::Path;
 
-use serde::Deserialize;
-
 use crate::attribution::{self, normalize_title};
 use crate::discord::Activity;
 use crate::protocol::{self, PageMetadata, Report, Service, Tab};
@@ -50,8 +48,7 @@ pub const APPLE_EXTENSION_TIMING_MAX_AGE_SECONDS: f64 = 75.0;
 // ---------------------------------------------------------------------------
 // Configuration.
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub client_id: String,
     pub sources: Vec<String>,
@@ -74,14 +71,58 @@ impl Default for Config {
 
 impl Config {
     /// Defaults overlaid with `config.json`, when one sits beside the
-    /// executable. Keys the file leaves out keep their defaults.
+    /// executable. Keys the file leaves out keep their defaults, and a key
+    /// of the wrong type keeps its default with a log line rather than
+    /// discarding the whole file.
     pub fn load(path: &Path) -> Result<Self, String> {
-        match std::fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(text.trim_start_matches('\u{feff}'))
-                .map_err(|e| format!("{} is not valid: {e}", path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(format!("{} could not be read: {e}", path.display())),
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => return Err(format!("{} could not be read: {e}", path.display())),
+        };
+        let value: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+            .map_err(|e| format!("{} is not valid: {e}", path.display()))?;
+        let serde_json::Value::Object(map) = value else {
+            return Err(format!("{} is not a JSON object", path.display()));
+        };
+        Ok(Self::overlay(&map))
+    }
+
+    fn overlay(map: &serde_json::Map<String, serde_json::Value>) -> Self {
+        use serde_json::Value;
+        let mut config = Self::default();
+        let ignored = |key: &str| crate::log!("Ignoring config.json {key}: unexpected type");
+        match map.get("client_id") {
+            None => {}
+            Some(Value::String(id)) => config.client_id = id.clone(),
+            // pypresence took the ID as str(client_id).
+            Some(Value::Number(id)) => config.client_id = id.to_string(),
+            Some(_) => ignored("client_id"),
         }
+        match map.get("sources") {
+            None => {}
+            // A null list allowed every source, as an empty one does.
+            Some(Value::Null) => config.sources.clear(),
+            Some(Value::Array(items)) if items.iter().all(Value::is_string) => {
+                config.sources = items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_owned))
+                    .collect();
+            }
+            Some(_) => ignored("sources"),
+        }
+        for (key, slot) in [
+            ("service_label", &mut config.service_label),
+            ("image_key", &mut config.image_key),
+        ] {
+            match map.get(key) {
+                None => {}
+                Some(Value::Null) => slot.clear(),
+                Some(Value::String(text)) => *slot = text.clone(),
+                Some(_) => ignored(key),
+            }
+        }
+        config
     }
 }
 

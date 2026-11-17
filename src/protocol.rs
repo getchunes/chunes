@@ -515,12 +515,72 @@ pub fn validate_report(value: &Value) -> Result<(Report, u8), ProtocolError> {
     ))
 }
 
+fn hex4(bytes: &[u8]) -> Option<u16> {
+    let text = std::str::from_utf8(bytes.get(..4)?).ok()?;
+    u16::from_str_radix(text, 16).ok()
+}
+
+/// Turn each `\uD800`-`\uDFFF` escape that is not half of a valid pair into
+/// `\uFFFD`.
+///
+/// A browser that cuts a title in the middle of an emoji sends a lone
+/// surrogate escape. Python's `json.loads` accepts it as one character, but
+/// serde_json refuses the whole document, so the report would be lost. The
+/// replacement is also one character, so length limits count the same.
+pub fn replace_lone_surrogates(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains("\\u") {
+        return text.into();
+    }
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            i += 1;
+            continue;
+        }
+        if bytes.get(i + 1) != Some(&b'u') {
+            // Any other escape, including an escaped backslash.
+            i += 2;
+            continue;
+        }
+        let Some(unit) = hex4(&bytes[i + 2..]) else {
+            i += 2;
+            continue;
+        };
+        let paired = (0xD800..=0xDBFF).contains(&unit)
+            && bytes.get(i + 6) == Some(&b'\\')
+            && bytes.get(i + 7) == Some(&b'u')
+            && bytes
+                .get(i + 8..)
+                .and_then(hex4)
+                .is_some_and(|low| (0xDC00..=0xDFFF).contains(&low));
+        if paired {
+            i += 12;
+        } else if (0xD800..=0xDFFF).contains(&unit) {
+            out.push_str(&text[copied..i]);
+            out.push_str("\\uFFFD");
+            i += 6;
+            copied = i;
+        } else {
+            i += 6;
+        }
+    }
+    if copied == 0 {
+        return text.into();
+    }
+    out.push_str(&text[copied..]);
+    out.into()
+}
+
 pub fn parse_report_body(body: &[u8]) -> Result<(Report, u8), ProtocolError> {
     if body.is_empty() || body.len() > MAX_BODY_BYTES {
         return Err(bad("Invalid body size"));
     }
     let text = std::str::from_utf8(body).map_err(|_| bad("Invalid JSON"))?;
-    let Strict(value) = serde_json::from_str(text).map_err(|_| bad("Invalid JSON"))?;
+    let text = replace_lone_surrogates(text);
+    let Strict(value) = serde_json::from_str(&text).map_err(|_| bad("Invalid JSON"))?;
     validate_report(&value)
 }
 

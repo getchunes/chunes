@@ -544,3 +544,21 @@ fn test_report_freshness_is_bounded() {
     assert!(!report_is_fresh(101.0, 100.0));
     assert!(!report_is_fresh(0.0, 100.0));
 }
+
+#[test]
+fn test_lone_surrogate_escapes_are_accepted_like_python() {
+    // A title cut in the middle of an emoji arrives as a lone surrogate.
+    assert_eq!(
+        replace_lone_surrogates(
+            r#"{"t":"a\ud83d","u":"\ud83d\ude00","v":"\\ud83d","w":"\udc00x"}"#
+        ),
+        r#"{"t":"a\uFFFD","u":"\ud83d\ude00","v":"\\ud83d","w":"\uFFFDx"}"#
+    );
+    assert_eq!(
+        replace_lone_surrogates(r#"{"t":"plain"}"#),
+        r#"{"t":"plain"}"#
+    );
+    let body = br#"{"protocol":5,"enabled":true,"services":{"appleMusic":true,"soundcloud":true,"youtubeMusic":true},"tabs":[{"host":"soundcloud.com","mediaId":null,"title":"Song by Artist \ud83c"}]}"#;
+    let (report, _) = parse_report_body(body).unwrap();
+    assert_eq!(report.tabs[0].title, "Song by Artist \u{FFFD}");
+}

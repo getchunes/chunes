@@ -25,7 +25,19 @@ pub fn open(path: &Path) -> std::io::Result<()> {
         // so a failed rotation just keeps appending.
         let _ = std::fs::rename(path, path.with_extension("log.old"));
     }
-    let file = OpenOptions::new().create(true).append(true).open(path)?;
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(windows)]
+    {
+        // Without FILE_SHARE_DELETE, so another Chunes process (an installer
+        // helper, or a second instance on its way out) cannot rotate the log
+        // out from under the running app.
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x1;
+        const FILE_SHARE_WRITE: u32 = 0x2;
+        options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    let file = options.open(path)?;
     *SINK.lock().unwrap_or_else(|e| e.into_inner()) = Some(file);
     Ok(())
 }

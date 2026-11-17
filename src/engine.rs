@@ -16,6 +16,10 @@ use crate::tab_server::{self, SharedState};
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(10);
 const SERVER_RETRY_DELAY: Duration = Duration::from_secs(30);
+/// After this many failed reconnects (ten minutes) the tray and the
+/// extension stop showing the last track, as when Python gave up and
+/// restarted its engine.
+const RECONNECTS_BEFORE_CLEARING: u32 = 60;
 
 fn config_path() -> PathBuf {
     std::env::current_exe()
@@ -70,16 +74,25 @@ pub async fn run(state: SharedState, switches: fn() -> Switches) {
     )));
     let pid = std::process::id();
     let mut connected_before = false;
+    let mut failed_connects = 0u32;
 
     loop {
         let mut rpc = match discord::connect(&client_id).await {
             Ok(rpc) => rpc,
             Err(error) => {
-                log!("Could not reach Discord ({error}), retrying in 10s");
+                if failed_connects == 0 {
+                    log!("Could not reach Discord ({error}), retrying every 10s");
+                }
+                failed_connects += 1;
+                if failed_connects == RECONNECTS_BEFORE_CLEARING {
+                    log!("Discord has been unreachable for 10 minutes; clearing the status.");
+                    set_status(&state, None, None);
+                }
                 tokio::time::sleep(RECONNECT_DELAY).await;
                 continue;
             }
         };
+        failed_connects = 0;
         if connected_before {
             log!("Reconnected to Discord.");
         } else {
@@ -133,6 +146,10 @@ pub async fn run(state: SharedState, switches: fn() -> Switches) {
             };
             if let Err(error) = sent {
                 log!("RPC hiccup ({error}), reconnecting...");
+                // Python still slept out the poll before retrying, so an
+                // activity Discord rejects is retried every five seconds,
+                // not in a tight loop.
+                tokio::time::sleep(Duration::from_secs(presence::POLL_SECONDS)).await;
                 break;
             }
             tokio::time::sleep(Duration::from_secs(presence::POLL_SECONDS)).await;

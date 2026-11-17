@@ -3,6 +3,8 @@
 // build.rs writes chunes_version.h into OUT_DIR, which is on the include
 // path, with the Cargo.toml package version and the absolute paths of the
 // icon and manifest.
+// The generated header holds absolute paths, which may not be ASCII.
+#pragma code_page(65001)
 #include "chunes_version.h"
 
 // The tray loads its icon by resource ID 1, so this ordinal must not change.

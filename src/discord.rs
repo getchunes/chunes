@@ -217,17 +217,24 @@ pub async fn connect(
     client_id: &str,
 ) -> Result<Client<tokio::net::windows::named_pipe::NamedPipeClient>, IpcError> {
     use tokio::net::windows::named_pipe::ClientOptions;
-    let mut last = IpcError::Closed("Discord is not running".into());
+    // Keep the first real failure: the empty pipe slots after it all say
+    // "not found", which would hide why Discord's own pipe refused us.
+    let mut failure: Option<IpcError> = None;
     for index in 0..10 {
         match ClientOptions::new().open(format!(r"\\.\pipe\discord-ipc-{index}")) {
             Ok(pipe) => match Client::handshake(pipe, client_id).await {
                 Ok(client) => return Ok(client),
-                Err(error) => last = error,
+                Err(error) => {
+                    failure.get_or_insert(error);
+                }
             },
-            Err(error) => last = error.into(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                failure.get_or_insert(error.into());
+            }
         }
     }
-    Err(last)
+    Err(failure.unwrap_or_else(|| IpcError::Closed("Discord is not running".into())))
 }
 
 #[cfg(test)]

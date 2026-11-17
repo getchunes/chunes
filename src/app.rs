@@ -42,8 +42,10 @@ fn acquire_single_instance() -> bool {
             }
             Ok(_) => true,
             Err(error) => {
+                // Python raised here and the process ended; never risk two
+                // engines publishing at once.
                 log!("Could not create the single-instance mutex: {error}");
-                true
+                false
             }
         }
     }
@@ -183,6 +185,8 @@ pub fn main() {
     if let Err(error) = applog::open(&log_path) {
         eprintln!("Could not open {}: {error}", log_path.display());
     }
+    // A windowed app has no stderr, so panics would otherwise vanish.
+    std::panic::set_hook(Box::new(|info| log!("Panic: {info}")));
     let args: Vec<String> = std::env::args().skip(1).collect();
     if handle_installer_command(&args) {
         return;

@@ -9,7 +9,8 @@ pub struct Request<'a> {
     pub url: &'a str,
     pub headers: &'a [(&'a str, &'a str)],
     pub timeout: Duration,
-    /// Refuse a body longer than this.
+    /// Stop reading after this many bytes plus one; a longer body comes
+    /// back truncated to that, for the caller to reject.
     pub max_bytes: u64,
     /// Fail on any redirect instead of following it.
     pub no_redirects: bool,
@@ -41,7 +42,9 @@ pub fn get(request: &Request) -> Result<String, String> {
     let body = response
         .body_mut()
         .with_config()
-        .limit(request.max_bytes)
+        // One byte over the cap, so the caller can tell "too large" apart
+        // from a transport failure, as Python's read(limit + 1) did.
+        .limit(request.max_bytes + 1)
         .read_to_vec()
         .map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&body).into_owned())

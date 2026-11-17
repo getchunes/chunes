@@ -90,10 +90,16 @@ async fn read_request<S: AsyncRead + Unpin>(
     let head_end = tokio::time::timeout(READ_TIMEOUT, async {
         let mut chunk = [0u8; 1024];
         loop {
+            // asyncio's readuntil(limit=...) refuses a separator that starts
+            // past the limit, or a buffer that cannot hold one within it.
             if let Some(index) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
-                return Ok(index);
+                return if index > limit {
+                    Err(Failure::Framing)
+                } else {
+                    Ok(index)
+                };
             }
-            if buffer.len() > limit {
+            if buffer.len() + 1 > limit + 4 {
                 return Err(Failure::Framing);
             }
             let read = stream
@@ -108,9 +114,6 @@ async fn read_request<S: AsyncRead + Unpin>(
     })
     .await
     .map_err(|_| Failure::Framing)??;
-    if head_end + 4 > limit {
-        return Err(Failure::Framing);
-    }
     let head = buffer[..head_end].to_vec();
     let request = protocol::parse_request_head(&head)?;
     let mut body = buffer.split_off(head_end + 4);
@@ -150,7 +153,7 @@ pub async fn handle<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, state: Sha
                     || hosts(&report) != hosts(&state.report)
                     || report.enabled != state.report.enabled
                 {
-                    println!(
+                    crate::log!(
                         "Extension report (protocol {version}): enabled={}, audible hosts={:?}",
                         report.enabled,
                         hosts(&report)
@@ -218,6 +221,23 @@ mod tests {
         let state = state.lock().unwrap();
         assert_eq!(state.report.tabs[0].host, "soundcloud.com");
         assert!(state.fresh_report(now()).is_some());
+    }
+
+    #[tokio::test]
+    async fn head_size_limits_match_asyncio_readuntil() {
+        // Up to four bytes over the head limit still reach the parser, which
+        // answers 431 as Python did; anything longer is a framing error.
+        let padded = |len: usize| {
+            let mut head = b"GET /state HTTP/1.1\r\nX-Pad: ".to_vec();
+            head.resize(len, b'a');
+            head.extend_from_slice(b"\r\n\r\n");
+            head
+        };
+        let over = protocol::MAX_HEADER_BYTES + 4;
+        let response = exchange(&padded(over), SharedState::default()).await;
+        assert!(response.starts_with("HTTP/1.1 431 "), "{response}");
+        let response = exchange(&padded(over + 1), SharedState::default()).await;
+        assert!(response.starts_with("HTTP/1.1 400 "), "{response}");
     }
 
     #[tokio::test]

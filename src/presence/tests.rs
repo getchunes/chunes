@@ -1275,7 +1275,23 @@ fn test_config_defaults_and_overrides() {
     let config = Config::load(&path).unwrap();
     assert_eq!(config.service_label, "Winamp");
     assert_eq!(config.client_id, Config::default().client_id);
+    std::fs::write(
+        &path,
+        r#"{"client_id": 123, "sources": null, "service_label": 5, "image_key": null}"#,
+    )
+    .unwrap();
+    let config = Config::load(&path).unwrap();
+    assert_eq!(config.client_id, "123");
+    assert!(config.sources.is_empty());
+    assert_eq!(config.service_label, "");
+    std::fs::write(&path, r#"{"sources": ["chrome", 1]}"#).unwrap();
+    assert_eq!(
+        Config::load(&path).unwrap().sources,
+        Config::default().sources
+    );
     std::fs::write(&path, "{").unwrap();
+    assert!(Config::load(&path).is_err());
+    std::fs::write(&path, "[]").unwrap();
     assert!(Config::load(&path).is_err());
     std::fs::remove_dir_all(&dir).unwrap();
 }
