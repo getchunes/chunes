@@ -17,7 +17,7 @@ pub struct Request<'a> {
 
 #[cfg(windows)]
 pub fn get(request: &Request) -> Result<String, String> {
-    use ureq::tls::{TlsConfig, TlsProvider};
+    use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(request.timeout))
@@ -25,6 +25,7 @@ pub fn get(request: &Request) -> Result<String, String> {
         .tls_config(
             TlsConfig::builder()
                 .provider(TlsProvider::NativeTls)
+                .root_certs(RootCerts::PlatformVerifier)
                 .build(),
         )
         .build()
