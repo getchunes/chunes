@@ -19,7 +19,7 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-threa
 
 [target.'cfg(windows)'.dependencies]
 ureq = { version = "3", default-features = false, features = ["native-tls-no-default"] }
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "ApplicationModel",
     "Foundation",
     "Media_Control",

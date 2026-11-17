@@ -234,7 +234,7 @@ mod winrt {
             state(
                 self.0
                     .RequestEnableAsync()
-                    .and_then(|operation| operation.get())
+                    .and_then(|operation| operation.join())
                     .map_err(failed)?,
             )
         }
@@ -246,7 +246,7 @@ mod winrt {
 
     pub fn open() -> Result<Box<dyn Task>, Unavailable> {
         let task = WinRtTask::GetAsync(&HSTRING::from(TASK_ID))
-            .and_then(|operation| operation.get())
+            .and_then(|operation| operation.join())
             .map_err(|_| Unavailable(format!("StartupTask {TASK_ID} was not declared")))?;
         Ok(Box::new(Declared(task)))
     }
