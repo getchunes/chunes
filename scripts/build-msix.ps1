@@ -7,13 +7,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
-$version = (& python -c "from version import __version__; print(__version__)").Trim()
+$version = ([string](& (Join-Path $PSScriptRoot "get-version.ps1"))).Trim()
 
 if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-    throw "version.py does not contain a stable semantic version"
-}
-if (-not [Environment]::Is64BitProcess) {
-    throw "Chunes must be built with 64-bit Python"
+    throw "Cargo.toml does not contain a stable semantic version"
 }
 
 # The Microsoft Store reserves the fourth part of a package version.
@@ -53,15 +50,7 @@ $makeappx = Get-SdkTool "makeappx.exe"
 $makepri = Get-SdkTool "makepri.exe"
 
 if (-not $SkipExecutable) {
-    & python -m PyInstaller `
-        --noconfirm `
-        --clean `
-        --distpath (Join-Path $root "dist") `
-        --workpath (Join-Path $root "build\pyinstaller") `
-        (Join-Path $root "Chunes.spec")
-    if ($LASTEXITCODE -ne 0) {
-        throw "PyInstaller failed with exit code $LASTEXITCODE"
-    }
+    & (Join-Path $PSScriptRoot "build-exe.ps1")
 }
 
 $executable = Join-Path $root "dist\Chunes.exe"

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Stable version from version.py
+        description: Stable version from Cargo.toml
         required: true
         default: 1.0.12
         type: string
@@ -51,7 +51,7 @@ jobs:
       - name: Match source version
         shell: pwsh
         run: |
-          $sourceVersion = (python -c "from version import __version__; print(__version__)").Trim()
+          $sourceVersion = ([string](& .\scripts\get-version.ps1)).Trim()
           if ($sourceVersion -cne $env:RELEASE_VERSION) {
             throw "Requested $env:RELEASE_VERSION but source is $sourceVersion"
           }
@@ -68,7 +68,7 @@ jobs:
             throw "Could not check whether $tag exists"
           }
           if ($tagRefs.Count -ne 0) {
-            throw "$env:RELEASE_VERSION was already submitted to the Store; bump version.py"
+            throw "$env:RELEASE_VERSION was already submitted to the Store; bump the Cargo.toml version"
           }
 
       - name: Install hash-locked dependencies
@@ -81,6 +81,12 @@ jobs:
           python -m pip check
           python -m compileall -q chunes.py packaged.py presence.py protocol.py settings.py startup_task.py updater.py msi_identity.py version.py tests
           python -m unittest discover -s tests -v
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Test Rust
+        run: cargo test --locked
 
       - name: Build the MSIX package
         shell: pwsh

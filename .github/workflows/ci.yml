@@ -39,6 +39,18 @@ jobs:
           python -m compileall -q chunes.py packaged.py presence.py protocol.py settings.py startup_task.py updater.py msi_identity.py version.py tests
           python -m unittest discover -s tests -v
 
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Lint Rust
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test Rust
+        run: cargo test --locked
+
       - name: Get hash-locked WiX Toolset
         shell: pwsh
         run: |
@@ -52,9 +64,9 @@ jobs:
       - name: Verify build metadata
         shell: pwsh
         run: |
-          $version = (python -c "from version import __version__; print(__version__)").Trim()
+          $version = ([string](& .\scripts\get-version.ps1)).Trim()
           if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-            throw "version.py does not contain a stable semantic version"
+            throw "Cargo.toml does not contain a stable semantic version"
           }
           $fileVersion = "$version.0"
           $exe = Get-Item -LiteralPath "dist\Chunes.exe"
@@ -75,14 +87,17 @@ jobs:
           if (-not (Test-Path -LiteralPath $msi -PathType Leaf)) {
             throw "Expected MSI was not produced: $msi"
           }
-          $env:CHUNES_CI_VERSION = $version
-          $env:CHUNES_CI_MSI = (Resolve-Path -LiteralPath $msi).Path
-          python -c "import os; from msi_identity import verify_msi_identity; verify_msi_identity(os.environ['CHUNES_CI_MSI'], os.environ['CHUNES_CI_VERSION'])"
-          if ($LASTEXITCODE -ne 0) {
-            throw "MSI identity verification failed"
+          $msiPath = (Resolve-Path -LiteralPath $msi).Path
+          & .\scripts\verify-msi.ps1 -Path $msiPath -ExpectedVersion $version
+
+          # The application manifest from installer\chunes.manifest is stored
+          # as UTF-8 text in the RT_MANIFEST resource.
+          $exeText = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($exe.FullName))
+          if (-not $exeText.Contains(">PerMonitorV2</dpiAwareness>")) {
+            throw "The executable does not embed the Chunes application manifest"
           }
 
-          foreach ($path in @($exe.FullName, $env:CHUNES_CI_MSI)) {
+          foreach ($path in @($exe.FullName, $msiPath)) {
             $signature = Get-AuthenticodeSignature -LiteralPath $path
             if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
               throw "Normal CI output must be unsigned: $path ($($signature.Status))"
@@ -96,7 +111,7 @@ jobs:
       - name: Verify MSIX packaging
         shell: pwsh
         run: |
-          $version = (python -c "from version import __version__; print(__version__)").Trim()
+          $version = ([string](& .\scripts\get-version.ps1)).Trim()
           $msix = "dist\Chunes-$version-x64.msix"
           if (-not (Test-Path -LiteralPath $msix -PathType Leaf)) {
             throw "Expected MSIX was not produced: $msix"

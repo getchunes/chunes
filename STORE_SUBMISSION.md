@@ -27,8 +27,8 @@ They live in `installer/msix/AppxManifest.xml` and are asserted by
 ## Version numbers are permanent
 
 The Store never lets a version number be reused, including after a failed
-certification. Package version is always `<version.py>.0`, because the Store
-reserves the fourth part.
+certification. Package version is always `<Cargo.toml version>.0`, because the
+Store reserves the fourth part.
 
 A `store/v<version>` tag records every version that has been uploaded to
 Partner Center. The workflow refuses to build a version that already carries
@@ -44,9 +44,9 @@ requires a Store submission to have a matching GitHub release, or the reverse.
 
 ## Cutting a Store build
 
-1. Choose the next unused version and synchronize `version.py`, the fallback
-   `ProductVersion` in `installer/Chunes.wxs`, and every version tuple and
-   string in `installer/version_info.txt`.
+1. Choose the next unused version and set it as the `[package]` `version` in
+   `Cargo.toml`, then synchronize `version.py` (until the Python sources are
+   removed) and the fallback `ProductVersion` in `installer/Chunes.wxs`.
 2. Merge to `main` through the protected pull-request path after Windows CI and
    CodeQL pass. CI builds and checks the MSIX on every change, so packaging
    breakage surfaces before dispatch.
@@ -57,8 +57,8 @@ requires a Store submission to have a matching GitHub release, or the reverse.
 
 ## If certification rejects the build
 
-The version number is spent. Fix the finding, bump `version.py` to the next
-version, and cut a fresh Store build. There is no need to publish a GitHub
+The version number is spent. Fix the finding, bump the `Cargo.toml` version to
+the next version, and cut a fresh Store build. There is no need to publish a GitHub
 release at the new version; the MSI channel can stay where it is.
 
 ## Testing the package locally

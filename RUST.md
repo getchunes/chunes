@@ -1,8 +1,9 @@
 # Chunes in Rust
 
-This directory is an exploratory port of the Windows app to Rust. It is not
-shipped, packaged, or signed, and the Python app at the repository root is
-still the release build.
+The crate at the repository root is the port of the Windows app to Rust.
+`scripts/build.ps1` and the release workflows build `Chunes.exe` from it with
+cargo and package that executable into the MSI and the MSIX. The Python
+sources stay in the repository until the port is complete.
 
 What is ported so far:
 
@@ -30,7 +31,6 @@ On 64-bit Windows with the Rust toolchain and the Visual Studio C++ build
 tools installed, quit the Python Chunes first (both bind port 52846), then:
 
 ```powershell
-cd rust
 cargo run
 ```
 

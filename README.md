@@ -199,18 +199,20 @@ python presence.py
 
 `presence.py` runs in a console for debugging; `chunes.py` runs the tray app.
 
-Build the versioned executable and per-user MSI with PyInstaller and WiX Toolset
-3.14.1. CI downloads the official WiX archive through `scripts/get-wix.ps1` and
-requires its fixed SHA-256 before use:
+Build the versioned executable and per-user MSI with cargo and WiX Toolset
+3.14.1. The Rust toolchain is pinned by `rust-toolchain.toml`, and building
+needs the Visual Studio C++ build tools and the Windows SDK. CI downloads the
+official WiX archive through `scripts/get-wix.ps1` and requires its fixed
+SHA-256 before use:
 
 ```powershell
 .\scripts\build.ps1
 ```
 
-The outputs are `dist\Chunes.exe` and `dist\Chunes-<version>-x64.msi`. The
-PyInstaller spec embeds the current `version.py` value as four-part file and
-product metadata, plus the canonical executable icon and tray PNG. Runtime
-asset loading resolves through PyInstaller's extraction directory when frozen.
+The outputs are `dist\Chunes.exe` and `dist\Chunes-<version>-x64.msi`.
+`build.rs` embeds the `Cargo.toml` package version as four-part file and
+product metadata, the canonical executable icon, and the application manifest
+from `installer\chunes.rc`.
 
 ## Release process
 

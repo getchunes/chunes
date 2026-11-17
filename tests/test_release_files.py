@@ -1,6 +1,7 @@
 import hashlib
 from pathlib import Path
 import re
+import tomllib
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -8,6 +9,10 @@ from version import __version__
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CARGO = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+# Cargo.toml is the single version source for Chunes.exe, the MSI, and the MSIX.
+VERSION = CARGO["package"]["version"]
+WORKFLOWS = ROOT / ".github" / "workflows"
 WIX_NS = {"w": "http://schemas.microsoft.com/wix/2006/wi"}
 APPX_NS = {
     "p": "http://schemas.microsoft.com/appx/manifest/foundation/windows10",
@@ -51,23 +56,184 @@ class PackagingTests(unittest.TestCase):
         cls.tree = ET.parse(ROOT / "installer" / "Chunes.wxs")
         cls.product = cls.tree.getroot().find("w:Product", WIX_NS)
 
-    def test_release_metadata_is_synchronized_with_version_module(self):
-        self.assertRegex(__version__, r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-        version_parts = tuple(int(part) for part in __version__.split("."))
-        file_version = f"{__version__}.0"
-        version_info = (ROOT / "installer" / "version_info.txt").read_text(
-            encoding="utf-8"
-        )
-        tuple_text = ", ".join(str(part) for part in (*version_parts, 0))
-        self.assertIn(f"filevers=({tuple_text})", version_info)
-        self.assertIn(f"prodvers=({tuple_text})", version_info)
-        self.assertIn(f"ProductVersion', '{file_version}'", version_info)
-        self.assertIn(f"FileVersion', '{file_version}'", version_info)
+    def test_release_metadata_is_synchronized_with_cargo_version(self):
+        self.assertRegex(VERSION, r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+        # version.py stays in step until the Python sources are removed.
+        self.assertEqual(__version__, VERSION)
 
         wix = (ROOT / "installer" / "Chunes.wxs").read_text(encoding="utf-8")
         fallback = re.search(r'<\?define ProductVersion="([^"]+)" \?>', wix)
         self.assertIsNotNone(fallback)
-        self.assertEqual(fallback.group(1), __version__)
+        self.assertEqual(fallback.group(1), VERSION)
+
+        self.assertFalse((ROOT / "installer" / "version_info.txt").exists())
+        self.assertFalse((ROOT / "Chunes.spec").exists())
+
+    def test_executable_resources_carry_the_cargo_version_and_icon(self):
+        self.assertEqual([binary["name"] for binary in CARGO["bin"]], ["Chunes"])
+        self.assertIn("embed-resource", CARGO["build-dependencies"])
+
+        build = (ROOT / "build.rs").read_text(encoding="utf-8")
+        # Resources need rc.exe, so only a Windows host building for Windows
+        # compiles them; any other host can still check the Windows target.
+        self.assertIn('env::var("CARGO_CFG_TARGET_OS")', build)
+        self.assertIn("if !(target_is_windows && cfg!(windows))", build)
+        self.assertIn('"installer/chunes.rc"', build)
+        self.assertIn('"assets/chunes-tray.ico"', build)
+        self.assertIn('"installer/chunes.manifest"', build)
+        for path in ("build.rs", "{RESOURCE_SCRIPT}", "{MANIFEST}", "{ICON}"):
+            with self.subTest(rerun=path):
+                self.assertIn(f'"cargo:rerun-if-changed={path}"', build)
+        self.assertIn("CARGO_PKG_VERSION_{name}", build)
+        self.assertIn('["MAJOR", "MINOR", "PATCH"]', build)
+        self.assertIn("#define CHUNES_VERSION_BINARY {major},{minor},{patch},0", build)
+        self.assertIn(
+            '#define CHUNES_VERSION_STRING \\"{major}.{minor}.{patch}.0\\"', build
+        )
+        self.assertIn('compile_for(root.join(RESOURCE_SCRIPT), ["Chunes"]', build)
+        self.assertIn(".manifest_required()", build)
+
+        rc = (ROOT / "installer" / "chunes.rc").read_text(encoding="utf-8")
+        lines = [line.strip() for line in rc.splitlines()]
+        self.assertIn('#include "chunes_version.h"', lines)
+        # The tray loads its icon by resource ID 1.
+        self.assertIn("1 ICON CHUNES_ICON_FILE", lines)
+        self.assertIn("1 24 CHUNES_MANIFEST_FILE", lines)
+        for line in (
+            "1 VERSIONINFO",
+            "FILEVERSION CHUNES_VERSION_BINARY",
+            "PRODUCTVERSION CHUNES_VERSION_BINARY",
+            "FILEFLAGSMASK 0x3fL",
+            "FILEFLAGS 0x0L",
+            "FILEOS 0x40004L",
+            "FILETYPE 0x1L",
+            "FILESUBTYPE 0x0L",
+            'BLOCK "040904B0"',
+            'VALUE "Translation", 0x409, 1200',
+        ):
+            with self.subTest(line=line):
+                self.assertIn(line, lines)
+        strings = dict(
+            re.findall(r'^\s*VALUE "(\w+)", ("[^"]*"|\w+)\s*$', rc, re.MULTILINE)
+        )
+        self.assertEqual(
+            strings,
+            {
+                "CompanyName": '"Chunes"',
+                "FileDescription": '"Chunes Discord music presence"',
+                "FileVersion": "CHUNES_VERSION_STRING",
+                "InternalName": '"Chunes"',
+                "LegalCopyright": '"Copyright 2026 Chunes contributors"',
+                "OriginalFilename": '"Chunes.exe"',
+                "ProductName": '"Chunes"',
+                "ProductVersion": "CHUNES_VERSION_STRING",
+            },
+        )
+
+    def test_executable_manifest_is_as_invoker_and_per_monitor_v2(self):
+        root = ET.parse(ROOT / "installer" / "chunes.manifest").getroot()
+        asm_v1 = "{urn:schemas-microsoft-com:asm.v1}"
+        asm_v3 = "{urn:schemas-microsoft-com:asm.v3}"
+        compatibility = "{urn:schemas-microsoft-com:compatibility.v1}"
+        self.assertEqual(root.tag, f"{asm_v1}assembly")
+
+        level = root.find(
+            f"{asm_v3}trustInfo/{asm_v3}security/{asm_v3}requestedPrivileges/"
+            f"{asm_v3}requestedExecutionLevel"
+        )
+        self.assertEqual(level.attrib["level"], "asInvoker")
+        self.assertEqual(level.attrib["uiAccess"], "false")
+
+        supported = [
+            item.attrib["Id"]
+            for item in root.findall(
+                f"{compatibility}compatibility/{compatibility}application/"
+                f"{compatibility}supportedOS"
+            )
+        ]
+        self.assertEqual(supported, ["{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"])
+
+        awareness = root.find(
+            f"{asm_v3}application/{asm_v3}windowsSettings/"
+            "{http://schemas.microsoft.com/SMI/2016/WindowsSettings}dpiAwareness"
+        )
+        self.assertEqual(awareness.text, "PerMonitorV2")
+
+        controls = root.find(
+            f"{asm_v1}dependency/{asm_v1}dependentAssembly/{asm_v1}assemblyIdentity"
+        )
+        self.assertEqual(controls.attrib["name"], "Microsoft.Windows.Common-Controls")
+        self.assertEqual(controls.attrib["version"], "6.0.0.0")
+        self.assertEqual(controls.attrib["publicKeyToken"], "6595b64144ccf1df")
+
+    def test_build_scripts_build_the_executable_with_cargo(self):
+        build_exe = (ROOT / "scripts" / "build-exe.ps1").read_text(encoding="utf-8")
+        self.assertIn("& cargo build --locked --release", build_exe)
+        self.assertIn('"target\\release\\Chunes.exe"', build_exe)
+        self.assertIn('(Join-Path $dist "Chunes.exe")', build_exe)
+        self.assertIn("0x8664", build_exe)
+        self.assertIn("Push-Location -LiteralPath $root", build_exe)
+
+        get_version = (ROOT / "scripts" / "get-version.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('Join-Path $root "Cargo.toml"', get_version)
+        self.assertIn("\\[package\\]", get_version)
+
+        for name in ("build.ps1", "build-msix.ps1"):
+            with self.subTest(script=name):
+                script = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+                self.assertIn('(Join-Path $PSScriptRoot "get-version.ps1")', script)
+                self.assertRegex(
+                    script,
+                    re.compile(
+                        r"if \(-not \$SkipExecutable\) \{\s+"
+                        r'& \(Join-Path \$PSScriptRoot "build-exe\.ps1"\)\s+\}',
+                        re.MULTILINE,
+                    ),
+                )
+        for path in sorted((ROOT / "scripts").glob("*.ps1")):
+            script = path.read_text(encoding="utf-8")
+            for obsolete in ("python", "PyInstaller", "Chunes.spec", "version_info"):
+                with self.subTest(script=path.name, obsolete=obsolete):
+                    self.assertNotIn(obsolete, script)
+
+    def test_msi_identity_script_reads_the_property_table_read_only(self):
+        script = (ROOT / "scripts" / "verify-msi.ps1").read_text(encoding="utf-8")
+        self.assertIn("New-Object -ComObject WindowsInstaller.Installer", script)
+        # 0 is msiOpenDatabaseModeReadOnly.
+        self.assertIn('"OpenDatabase" $invoke @($resolved, 0)', script)
+        self.assertIn("SELECT `Property`, `Value` FROM `Property`", script)
+        self.assertIn('$expectedProductName = "Chunes"', script)
+        self.assertIn('$expectedManufacturer = "Chunes"', script)
+        self.assertIn(
+            '$expectedUpgradeCode = "{2DDF67BD-FBDE-4BDF-A090-F1552C2C1330}"', script
+        )
+        self.assertIn("ProductVersion = $version", script)
+        self.assertIn("if ($actual -cne $expected[$name])", script)
+        self.assertIn("Installer $name is", script)
+        self.assertIn("invalid stable version:", script)
+
+    def test_workflows_build_with_cargo_and_verify_msis_without_python(self):
+        self.assertFalse((WORKFLOWS / "rust.yml").exists())
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            workflow = path.read_text(encoding="utf-8")
+            for obsolete in (
+                "from version import",
+                "PyInstaller",
+                "msi_identity import",
+                "verify_msi_identity",
+            ):
+                with self.subTest(workflow=path.name, obsolete=obsolete):
+                    self.assertNotIn(obsolete, workflow)
+        for name in ("ci.yml", "release-unsigned.yml", "release-msix.yml"):
+            with self.subTest(workflow=name):
+                workflow = (WORKFLOWS / name).read_text(encoding="utf-8")
+                self.assertIn(
+                    "rustup show active-toolchain || rustup toolchain install", workflow
+                )
+                self.assertIn("cargo test --locked", workflow)
+                self.assertIn("& .\\scripts\\get-version.ps1", workflow)
 
     def test_installer_is_per_user_x64_with_stable_upgrade_code(self):
         self.assertEqual(
@@ -523,7 +689,14 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('Remove-Item -LiteralPath "build", "dist"', workflow)
         self.assertIn("-UnsignedManualRelease", workflow)
         self.assertIn("ProductVersion = $expectedFileVersion", workflow)
-        self.assertIn("verify_msi_identity", workflow)
+        self.assertEqual(
+            workflow.count(
+                "& .\\scripts\\verify-msi.ps1 -Path $msi "
+                "-ExpectedVersion $env:RELEASE_VERSION"
+            ),
+            2,
+        )
+        self.assertIn(".\\scripts\\build.ps1 -WixBin $env:WIX_BIN", workflow)
         self.assertIn("@($exe.FullName, $embeddedExe.FullName, $msi)", workflow)
         self.assertIn(
             "Unsigned MSI does not contain the exact freshly built Chunes.exe",
@@ -574,11 +747,20 @@ class PackagingTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertNotIn("1.0.0", workflow)
-        self.assertIn("from version import __version__", workflow)
+        self.assertIn("& .\\scripts\\get-version.ps1", workflow)
         self.assertIn('$fileVersion = "$version.0"', workflow)
         self.assertIn('dist\\Chunes-$version-x64.msi', workflow)
-        self.assertIn("verify_msi_identity", workflow)
+        self.assertIn(".\\scripts\\build.ps1 -WixBin $env:WIX_BIN", workflow)
+        self.assertIn(
+            "& .\\scripts\\verify-msi.ps1 -Path $msiPath -ExpectedVersion $version",
+            workflow,
+        )
+        self.assertIn(">PerMonitorV2</dpiAwareness>", workflow)
         self.assertIn("SignatureStatus]::NotSigned", workflow)
+        # The Rust checks that used to run in rust.yml.
+        self.assertIn("cargo fmt --check", workflow)
+        self.assertIn("cargo clippy --locked --all-targets -- -D warnings", workflow)
+        self.assertIn("cargo test --locked", workflow)
 
     def test_release_policy_documents_the_unsigned_release_path(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -604,10 +786,12 @@ class PackagingTests(unittest.TestCase):
         ):
             with self.subTest(obsolete=obsolete):
                 self.assertNotIn(obsolete, combined)
+        self.assertNotIn("version_info.txt", runbook)
+        self.assertNotIn("PyInstaller", runbook)
         for runbook_item in (
+            "Cargo.toml",
             "version.py",
             "installer/Chunes.wxs",
-            "installer/version_info.txt",
             "Publish unsigned manual release",
             "CodeQL",
             "UpgradeCode",
@@ -644,10 +828,10 @@ class MsixPackagingTests(unittest.TestCase):
             "p:Applications/p:Application", APPX_NS
         )
 
-    def test_package_version_tracks_version_module(self):
+    def test_package_version_tracks_cargo_version(self):
         # Partner Center reserves the fourth part and never lets a version
         # number be reused, so this has to stay exact.
-        self.assertEqual(self.identity.attrib["Version"], f"{__version__}.0")
+        self.assertEqual(self.identity.attrib["Version"], f"{VERSION}.0")
 
     def test_identity_matches_the_reserved_partner_center_product(self):
         self.assertEqual(self.identity.attrib["Name"], "dubsector.dev.Chunes")
