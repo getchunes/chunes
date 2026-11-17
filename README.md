@@ -135,8 +135,8 @@ the correct service when another tab owns the browser media session.
 
 - **Start with Windows** adds or removes the current-user Windows `Run` entry.
   It is checked only when that entry resolves to the running Chunes executable.
-  Installed Chunes migrates recognized portable or source commands but leaves
-  unrelated same-named registry values untouched.
+  Installed Chunes migrates recognized portable or older source-build commands
+  but leaves unrelated same-named registry values untouched.
 - **Automatically check for updates** persists the startup update preference.
 - **Check for updates now** performs an immediate manual check.
 - **Look up online album art** controls whether Chunes uses the provider artwork
@@ -166,8 +166,7 @@ exits during an update check; updates are always installed manually.
 ## Configuration
 
 No configuration file is required. Advanced users can copy the shape from
-`config.example.json` to `config.json` next to the script or installed
-executable:
+`config.example.json` to `config.json` next to `Chunes.exe`:
 
 ```json
 {
@@ -185,32 +184,65 @@ fallback Discord application asset key or image URL.
 
 ## Develop and test
 
-Use 64-bit Python on Windows. Runtime and build versions are pinned separately;
-CI and releases additionally use the wheel hashes in
-`requirements-windows-py313.lock`:
+Chunes is a Rust crate at the repository root. `cargo` builds a single native
+`Chunes.exe`; there is no interpreter or runtime to install alongside it.
+
+On 64-bit Windows, install [rustup](https://rustup.rs/) and the Visual Studio
+C++ build tools with the Windows SDK. `rust-toolchain.toml` pins Rust 1.97.0
+with the `x86_64-pc-windows-msvc` target, clippy, and rustfmt, and rustup
+installs it on the first `cargo` command in the repository. The Windows SDK
+provides `rc.exe`, which `build.rs` uses to embed resources.
 
 ```powershell
-py -3.13 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements-build.txt
-python -m unittest discover -s tests -v
-python presence.py
+cargo test
+cargo run
 ```
 
-`presence.py` runs in a console for debugging; `chunes.py` runs the tray app.
+`cargo run` starts the tray app. Quit any installed Chunes first, because both
+bind the extension endpoint on `127.0.0.1:52846`. CI also runs
+`cargo fmt --check` and `cargo clippy --locked --all-targets -- -D warnings`.
 
-Build the versioned executable and per-user MSI with PyInstaller and WiX Toolset
-3.14.1. CI downloads the official WiX archive through `scripts/get-wix.ps1` and
-requires its fixed SHA-256 before use:
+Everything except the Windows-only modules below is compiled and tested on any
+host, including the presence rules, the Chune ID protocol, Discord IPC framing,
+the tray menu, the updater, and the release-file checks in
+`tests/release_files.rs`, so `cargo test` also runs on Linux and macOS. The
+Windows-only modules are:
+
+- `src/app.rs`: startup, the installer's helper commands, the single-instance
+  mutex, and the release check for the MSI build
+- `src/engine.rs`: the five-second presence loop that publishes to Discord
+- `src/media.rs`: the Windows media session through the `windows` crate
+- `src/tray.rs`: the notification-area icon and menu on plain Win32
+- `src/http.rs`: HTTPS through Windows' own TLS stack (Schannel), verified
+  against the Windows certificate store
+
+`build.rs` embeds the `Cargo.toml` package version as four-part file and
+product metadata, the canonical executable icon, and the application manifest
+from `installer\chunes.rc`.
+
+Build the versioned executable and per-user MSI with WiX Toolset 3.14.1. CI
+downloads the official WiX archive through `scripts/get-wix.ps1` and requires
+its fixed SHA-256 before use:
 
 ```powershell
 .\scripts\build.ps1
 ```
 
-The outputs are `dist\Chunes.exe` and `dist\Chunes-<version>-x64.msi`. The
-PyInstaller spec embeds the current `version.py` value as four-part file and
-product metadata, plus the canonical executable icon and tray PNG. Runtime
-asset loading resolves through PyInstaller's extraction directory when frozen.
+The outputs are `dist\Chunes.exe` and `dist\Chunes-<version>-x64.msi`.
+`scripts\build-exe.ps1` alone runs `cargo build --locked --release` and copies
+`target\release\Chunes.exe` to `dist\Chunes.exe`.
+
+Build the Microsoft Store MSIX with:
+
+```powershell
+.\scripts\build-msix.ps1
+```
+
+See [STORE_SUBMISSION.md](STORE_SUBMISSION.md) for signing that package with a
+throwaway certificate to test it locally.
+
+The version is the `[package]` `version` in `Cargo.toml`. The build scripts and
+workflows read it through `scripts/get-version.ps1`.
 
 ## Release process
 

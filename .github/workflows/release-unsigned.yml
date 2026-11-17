@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version from version.py
+        description: Version from Cargo.toml
         required: true
         default: 1.0.2
         type: string
@@ -54,18 +54,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13.14"
-          architecture: x64
-          cache: pip
-          cache-dependency-path: requirements-windows-py313.lock
-
       - name: Match source version and require unused tag
         shell: pwsh
         run: |
-          $sourceVersion = (python -c "from version import __version__; print(__version__)").Trim()
+          $sourceVersion = ([string](& .\scripts\get-version.ps1)).Trim()
           if ($sourceVersion -cne $env:RELEASE_VERSION) {
             throw "Requested $env:RELEASE_VERSION but source is $sourceVersion"
           }
@@ -78,16 +70,11 @@ jobs:
             throw "Release tag $tag already exists"
           }
 
-      - name: Install hash-locked dependencies
-        run: >-
-          python -m pip install --require-hashes --only-binary=:all:
-          -r requirements-windows-py313.lock
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
 
-      - name: Test
-        run: |
-          python -m pip check
-          python -m compileall -q chunes.py presence.py protocol.py settings.py updater.py msi_identity.py version.py tests
-          python -m unittest discover -s tests -v
+      - name: Test Rust
+        run: cargo test --locked
 
       - name: Get hash-locked WiX Toolset
         shell: pwsh
@@ -126,11 +113,7 @@ jobs:
             throw "Build must produce exactly $expectedName"
           }
           $msi = $msiFiles[0].FullName
-          $env:CHUNES_UNSIGNED_MSI = $msi
-          python -c "import os; from msi_identity import verify_msi_identity; verify_msi_identity(os.environ['CHUNES_UNSIGNED_MSI'], os.environ['RELEASE_VERSION'])"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unsigned MSI identity verification failed"
-          }
+          & .\scripts\verify-msi.ps1 -Path $msi -ExpectedVersion $env:RELEASE_VERSION
 
           $extract = Join-Path $env:RUNNER_TEMP "unsigned-msi-extracted"
           Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
@@ -200,12 +183,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13.14"
-          architecture: x64
-
       - name: Download verified unsigned MSI
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -225,11 +202,7 @@ jobs:
           if ($hash -cne "${{ needs.build.outputs.unsigned_sha256 }}") {
             throw "Unsigned MSI changed between build and publication"
           }
-          $env:CHUNES_UNSIGNED_MSI = $msi
-          python -c "import os; from msi_identity import verify_msi_identity; verify_msi_identity(os.environ['CHUNES_UNSIGNED_MSI'], os.environ['RELEASE_VERSION'])"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Publication MSI identity verification failed"
-          }
+          & .\scripts\verify-msi.ps1 -Path $msi -ExpectedVersion $env:RELEASE_VERSION
           $signature = Get-AuthenticodeSignature -LiteralPath $msi
           if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
             throw "Publication MSI must remain NotSigned, not $($signature.Status)"

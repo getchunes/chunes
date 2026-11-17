@@ -12,9 +12,14 @@ logs, issues, pull requests, release notes, or screenshots.
 
 ## GitHub release runbook
 
-1. Choose the next unused version and synchronize `version.py`, the fallback
-   `ProductVersion` in `installer/Chunes.wxs`, and every version tuple/string in
-   `installer/version_info.txt`.
+1. Choose the next unused version and set it as the `[package]` `version` in
+   `Cargo.toml`, then run `cargo build` so `Cargo.lock` follows. `Cargo.toml`
+   is the single build version source: `build.rs` derives the executable's
+   four-part file and product versions from it, and the build scripts and
+   workflows read it through `scripts/get-version.ps1`. Synchronize the
+   fallback `ProductVersion` in `installer/Chunes.wxs` and the `Identity`
+   `Version` in `installer/msix/AppxManifest.xml` (as `x.y.z.0`) with it;
+   `tests/release_files.rs` fails `cargo test` when they disagree.
 2. Preserve installer UpgradeCode
    `{2DDF67BD-FBDE-4BDF-A090-F1552C2C1330}` exactly so the release upgrades
    prior versions.

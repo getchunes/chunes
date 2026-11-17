@@ -1,8 +1,7 @@
-__pycache__/
-.venv/
 build/
 dist/
 config.json
 *.log
 *.wixobj
 *.wixpdb
+/target/

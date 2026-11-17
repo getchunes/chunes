@@ -198,9 +198,9 @@ the capability is inherent to a desktop app, not by an engineer.
 If a reviewer comes back wanting specifics, this is the same answer broken out:
 
 > Chunes is a Win32 desktop application packaged with the Desktop Bridge. It is
-> a PyInstaller-built Python executable declared as
-> `Windows.FullTrustApplication`, so `runFullTrust` is required for the package
-> to run at all. Every use is ordinary desktop functionality:
+> a single native executable compiled from Rust, with no bundled interpreter,
+> declared as `Windows.FullTrustApplication`, so `runFullTrust` is required for
+> the package to run at all. Every use is ordinary desktop functionality:
 >
 > - Discord Rich Presence IPC. The product's whole purpose is publishing the
 >   user's listening status to the Discord desktop app on the same PC. Chunes
@@ -214,8 +214,8 @@ If a reviewer comes back wanting specifics, this is the same answer broken out:
 >   playing. This means accepting inbound loopback connections from another
 >   local process.
 > - Windows media session data. Chunes reads track title, artist, and playback
->   timing from Global System Media Transport Controls, and runs the CPython
->   interpreter and native extension modules that PyInstaller bundles.
+>   timing from Global System Media Transport Controls through the
+>   Windows.Media.Control WinRT API.
 >
 > Chunes requests no other restricted capability. It does not require
 > administrator rights, does not install or depend on a driver or NT service,

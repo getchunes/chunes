@@ -1,0 +1,61 @@
+//! The rolling log file.
+//!
+//! The app has no console, so presence.py's `print` calls went to
+//! `chunes.log` through a redirected `sys.stdout`. `log!` writes the same
+//! lines there once `open` has run, and to standard output before that (and
+//! in tests).
+
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::Path;
+use std::sync::Mutex;
+
+/// A log over this size is moved aside to `chunes.log.old` at startup.
+pub const MAX_LOG_BYTES: u64 = 1_000_000;
+
+static SINK: Mutex<Option<File>> = Mutex::new(None);
+
+/// Start appending to `path`, rotating it first when it has grown too big.
+pub fn open(path: &Path) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    if path.metadata().is_ok_and(|m| m.len() > MAX_LOG_BYTES) {
+        // A short-lived installer helper may share the active process log,
+        // so a failed rotation just keeps appending.
+        let _ = std::fs::rename(path, path.with_extension("log.old"));
+    }
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(windows)]
+    {
+        // Without FILE_SHARE_DELETE, so another Chunes process (an installer
+        // helper, or a second instance on its way out) cannot rotate the log
+        // out from under the running app.
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x1;
+        const FILE_SHARE_WRITE: u32 = 0x2;
+        options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    let file = options.open(path)?;
+    *SINK.lock().unwrap_or_else(|e| e.into_inner()) = Some(file);
+    Ok(())
+}
+
+pub fn line(text: &str) {
+    let mut sink = SINK.lock().unwrap_or_else(|e| e.into_inner());
+    match sink.as_mut() {
+        Some(file) => {
+            let _ = writeln!(file, "{text}");
+        }
+        None => println!("{text}"),
+    }
+}
+
+/// `println!` into the log file.
+#[macro_export]
+macro_rules! log {
+    ($($arg:tt)*) => {
+        $crate::applog::line(&format!($($arg)*))
+    };
+}

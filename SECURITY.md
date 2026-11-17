@@ -46,6 +46,6 @@ The in-app check looks for newer published numeric versions. It opens that
 version's exact GitHub release page in the default browser and never downloads
 or runs an installer. Updates are always installed manually.
 
-Release builds use hash-locked Python wheels and the hash-locked official WiX
-archive. GitHub Actions are full-SHA pinned. Only the protected publication job
+Release builds compile only the crate versions pinned by `Cargo.lock`, built
+with `--locked`, and use the hash-locked official WiX archive. GitHub Actions are full-SHA pinned. Only the protected publication job
 receives `contents: write`, and it runs in its own protected environment.

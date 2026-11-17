@@ -16,7 +16,7 @@ Direct downloads stay on the MSI channel.
 
 These values must match the Product Identity page in Partner Center exactly.
 They live in `installer/msix/AppxManifest.xml` and are asserted by
-`tests/test_release_files.py`.
+`tests/release_files.rs`.
 
 | Field | Value |
 | --- | --- |
@@ -27,8 +27,8 @@ They live in `installer/msix/AppxManifest.xml` and are asserted by
 ## Version numbers are permanent
 
 The Store never lets a version number be reused, including after a failed
-certification. Package version is always `<version.py>.0`, because the Store
-reserves the fourth part.
+certification. Package version is always `<Cargo.toml version>.0`, because the
+Store reserves the fourth part.
 
 A `store/v<version>` tag records every version that has been uploaded to
 Partner Center. The workflow refuses to build a version that already carries
@@ -44,9 +44,11 @@ requires a Store submission to have a matching GitHub release, or the reverse.
 
 ## Cutting a Store build
 
-1. Choose the next unused version and synchronize `version.py`, the fallback
-   `ProductVersion` in `installer/Chunes.wxs`, and every version tuple and
-   string in `installer/version_info.txt`.
+1. Choose the next unused version and set it as the `[package]` `version` in
+   `Cargo.toml` and run `cargo build` so `Cargo.lock` follows. Then synchronize
+   the fallback `ProductVersion` in `installer/Chunes.wxs` and the `Identity`
+   `Version` in `installer/msix/AppxManifest.xml` as `<version>.0`.
+   `tests/release_files.rs` checks that all of them agree.
 2. Merge to `main` through the protected pull-request path after Windows CI and
    CodeQL pass. CI builds and checks the MSIX on every change, so packaging
    breakage surfaces before dispatch.
@@ -57,9 +59,11 @@ requires a Store submission to have a matching GitHub release, or the reverse.
 
 ## If certification rejects the build
 
-The version number is spent. Fix the finding, bump `version.py` to the next
-version, and cut a fresh Store build. There is no need to publish a GitHub
-release at the new version; the MSI channel can stay where it is.
+The version number is spent. Fix the finding, bump the `Cargo.toml` version to
+the next version (with `Cargo.lock`, the `installer/Chunes.wxs` fallback, and
+the AppxManifest `Identity` `Version` following it), and cut a fresh Store
+build. There is no need to publish a GitHub release at the new version; the MSI
+channel can stay where it is.
 
 ## Testing the package locally
 
@@ -88,8 +92,8 @@ Get-AppxPackage dubsector.dev.Chunes | Remove-AppxPackage
 
 ## What the packaged build does differently
 
-`packaged.py` detects the package identity at runtime, so the Store build and
-the MSI build are the same executable.
+`src/packaged.rs` detects the package identity at runtime, so the Store build
+and the MSI build are the same executable.
 
 - Updates come from the Store. The tray menu hides **Automatically check for
   updates** and **Check for updates now**, and the GitHub update controller
@@ -97,7 +101,7 @@ the MSI build are the same executable.
 - Autostart uses the manifest startup task rather than the Windows Run key. A
   packaged install path carries the package version, so a Run value would stop
   resolving after the next Store update. Windows Settings and Task Manager can
-  override the app's own toggle, and `startup_task.py` opens
+  override the app's own toggle, and `src/startup_task.rs` opens
   **Settings > Apps > Startup** when Windows refuses the request.
 - Settings, the log, and any config file follow the normal MSIX redirections
   for `HKCU` and `%LOCALAPPDATA%`. Nothing in the app writes to its install

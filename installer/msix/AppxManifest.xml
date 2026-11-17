@@ -1,9 +1,9 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   Identity/@Version is the only value scripts/build-msix.ps1 rewrites, and it
-  always becomes "<version.py>.0". The Microsoft Store reserves the fourth
-  part, so it must stay 0. Every other value here has to match the Product
-  Identity page in Partner Center exactly or the upload is rejected.
+  always becomes "<Cargo.toml version>.0". The Microsoft Store reserves the
+  fourth part, so it must stay 0. Every other value here has to match the
+  Product Identity page in Partner Center exactly or the upload is rejected.
 -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -54,7 +54,7 @@
         <!--
           The packaged build cannot use the Run key: its install path carries
           the package version and stops resolving after a Store update.
-          startup_task.py toggles this declaration instead.
+          Chunes.exe toggles this declaration instead.
         -->
         <uap5:Extension
           Category="windows.startupTask"
