@@ -269,7 +269,7 @@
               Win64="yes">
               <Condition>AUTOSTART = "1"</Condition>
               <!--
-                Quoted so chunes.py parses the command back to exactly one
+                Quoted so Chunes.exe parses the command back to exactly one
                 argument even when the installation directory has spaces.
               -->
               <RegistryValue

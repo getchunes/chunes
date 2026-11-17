@@ -40,14 +40,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13.14"
-          architecture: x64
-          cache: pip
-          cache-dependency-path: requirements-windows-py313.lock
-
       - name: Match source version
         shell: pwsh
         run: |
@@ -70,17 +62,6 @@ jobs:
           if ($tagRefs.Count -ne 0) {
             throw "$env:RELEASE_VERSION was already submitted to the Store; bump the Cargo.toml version"
           }
-
-      - name: Install hash-locked dependencies
-        run: >-
-          python -m pip install --require-hashes --only-binary=:all:
-          -r requirements-windows-py313.lock
-
-      - name: Test
-        run: |
-          python -m pip check
-          python -m compileall -q chunes.py packaged.py presence.py protocol.py settings.py startup_task.py updater.py msi_identity.py version.py tests
-          python -m unittest discover -s tests -v
 
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install
