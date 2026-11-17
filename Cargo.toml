@@ -39,7 +39,11 @@ windows = { version = "0.61", features = [
 embed-resource = "3"
 
 [dev-dependencies]
+regex = "1"
+roxmltree = "0.20"
+sha2 = "0.10"
 tokio = { version = "1", features = ["io-util", "macros", "rt"] }
+toml = "1"
 
 [profile.release]
 lto = true
