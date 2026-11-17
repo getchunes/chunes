@@ -4,20 +4,21 @@ version = "1.0.15"
 edition = "2021"
 rust-version = "1.85"
 license = "Apache-2.0"
-description = "Proof-of-concept Rust port of the Chunes Windows app"
+description = "Shows the music playing on Windows as a Discord Listening status"
 publish = false
 
 [[bin]]
-name = "chunes-poc"
+name = "Chunes"
 path = "src/main.rs"
 
 [dependencies]
-serde = "1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [target.'cfg(windows)'.dependencies]
+ureq = { version = "3", default-features = false, features = ["native-tls"] }
 windows = { version = "0.61", features = [
     "Foundation",
     "Media_Control",

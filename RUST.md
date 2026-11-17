@@ -1,4 +1,4 @@
-# Chunes in Rust (proof of concept)
+# Chunes in Rust
 
 This directory is an exploratory port of the Windows app to Rust. It is not
 shipped, packaged, or signed, and the Python app at the repository root is

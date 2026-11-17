@@ -3,11 +3,17 @@ name: Rust port CI
 on:
   push:
     paths:
-      - "rust/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
       - ".github/workflows/rust.yml"
   pull_request:
     paths:
-      - "rust/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
       - ".github/workflows/rust.yml"
 
 permissions:
@@ -20,9 +26,6 @@ concurrency:
 jobs:
   test-and-build:
     runs-on: windows-2022
-    defaults:
-      run:
-        working-directory: rust
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
@@ -45,5 +48,5 @@ jobs:
         shell: pwsh
         run: |
           cargo build --locked --release
-          $exe = Get-Item -LiteralPath "target\release\chunes-poc.exe"
+          $exe = Get-Item -LiteralPath "target\release\Chunes.exe"
           "Built $($exe.Name): $([math]::Round($exe.Length / 1KB)) KB"

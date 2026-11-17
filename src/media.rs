@@ -4,6 +4,8 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::presence::{extrapolate_position, Track};
+
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionManager as SessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
@@ -11,15 +13,6 @@ use windows::Media::Control::{
 
 /// 100 ns ticks between 1601-01-01 (WinRT `DateTime`) and the Unix epoch.
 const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Track {
-    pub title: String,
-    pub artist: String,
-    pub position: f64,
-    pub duration: f64,
-    pub source: String,
-}
 
 fn seconds(ticks: i64) -> f64 {
     ticks as f64 / 10_000_000.0
@@ -50,26 +43,16 @@ pub fn playing_track(allowed_sources: &[String]) -> windows::core::Result<Option
         }
         let artist = properties.Artist()?.to_string();
         let timeline = session.GetTimelineProperties()?;
-        let mut position = seconds(timeline.Position()?.Duration);
+        let position = seconds(timeline.Position()?.Duration);
         let duration = seconds(timeline.EndTime()?.Duration);
-
-        // position is a snapshot taken at LastUpdatedTime, not "now";
-        // browsers refresh it infrequently, so extrapolate forward. Inactive
-        // background tabs reset position on a track change but leave
-        // LastUpdatedTime pointing at the previous track's start.
-        let updated = seconds(timeline.LastUpdatedTime()?.UniversalTime - UNIX_EPOCH_TICKS);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0.0, |d| d.as_secs_f64());
-        let elapsed = now - updated;
-        let recent = elapsed > 0.0 && elapsed < 15.0;
-        let mid_track = elapsed > 0.0 && elapsed < 3600.0 && position > 15.0;
-        if recent || mid_track {
-            position += elapsed;
-        }
-        if duration > 0.0 && position >= duration {
-            position = 0.0;
-        }
+        let elapsed = timeline
+            .LastUpdatedTime()
+            .ok()
+            .map(|t| now - seconds(t.UniversalTime - UNIX_EPOCH_TICKS));
+        let position = extrapolate_position(position, duration, elapsed);
         return Ok(Some(Track {
             title,
             artist,

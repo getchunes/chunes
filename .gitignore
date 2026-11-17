@@ -6,4 +6,4 @@ config.json
 *.log
 *.wixobj
 *.wixpdb
-rust/target/
+/target/
