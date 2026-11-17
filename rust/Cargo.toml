@@ -1,0 +1,32 @@
+[package]
+name = "chunes"
+version = "1.0.15"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+description = "Proof-of-concept Rust port of the Chunes Windows app"
+publish = false
+
+[[bin]]
+name = "chunes-poc"
+path = "src/main.rs"
+
+[dependencies]
+serde = "1"
+serde_json = "1"
+url = "2"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Foundation",
+    "Media_Control",
+] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "rt"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
