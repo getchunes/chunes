@@ -64,31 +64,22 @@ automatic-update and artwork opt-outs during upgrades.
 
 ### Release trust
 
-Chunes v1.0.0 was the initial unsigned MSI. Windows reports **Unknown
-publisher**. Obtain `Chunes-1.0.0-x64.msi` only from the
-immutable [v1.0.0 GitHub release](https://github.com/getchunes/chunes/releases/tag/v1.0.0).
-The release title and notes prominently identify it as **UNSIGNED INTERIM**.
+GitHub releases of the MSI are not code signed, so Windows reports **Unknown
+publisher** when you run it. Each release title and installer says so. The
+Microsoft Store build is signed by Microsoft. If you want a signed install, use
+the Store.
 
-GitHub locks the published v1.0.0 asset and tag against replacement. Compare
-the local hash with both the SHA-256 printed in the release notes and the
-`sha256:` asset digest shown by GitHub:
+Every GitHub release and tag is immutable. To confirm an MSI is the one
+published, compare its hash with both the SHA-256 printed in the release notes
+and the `sha256:` asset digest shown by GitHub:
 
 ```powershell
-(Get-FileHash .\Chunes-1.0.0-x64.msi -Algorithm SHA256).Hash.ToLowerInvariant()
+(Get-FileHash .\Chunes-<version>-x64.msi -Algorithm SHA256).Hash.ToLowerInvariant()
 ```
 
 A match confirms that the downloaded bytes are the bytes in that immutable
-GitHub release. It does not provide Authenticode publisher identity, prove that
-the code is safe, or turn the unsigned MSI into a signed one.
-
-New releases use one of two channels. A signed stable release is published as
-`latest`. If code signing is unavailable,
-an unsigned release may instead be published as an explicitly labeled manual
-release; Windows shows **Unknown publisher**. Chunes finds either kind of
-newer published release and opens its exact GitHub release page in the default
-browser for a manual update. Every release and tag is immutable. A later signing
-transition always uses a higher version rather than replacing an unsigned
-release.
+GitHub release. It does not provide Authenticode publisher identity or prove
+that the code is safe.
 
 ## How it works
 
@@ -167,35 +158,10 @@ local and network data flow and the corresponding opt-outs.
 
 ## Update security
 
-Chunes checks published releases in `getchunes/chunes`, including explicitly
-labeled unsigned manual releases. When it finds a newer numeric version, it
-opens that version's exact GitHub release page in the default browser. Chunes
-does not currently download an MSI, start Windows Installer, or exit during an
-update check.
-
-The signed automatic-install path remains in the application but is not wired
-to automatic or manual checks until signed releases are available. Before that
-path can start `msiexec`, it requires:
-
-- a strictly newer stable semantic version
-- an immutable GitHub release
-- exactly one asset named `Chunes-<version>-x64.msi`
-- a byte-for-byte match with the SHA-256 digest returned by GitHub's release API
-- a Windows-trusted Authenticode signature whose publisher is exactly
-  **SignPath Foundation**
-- MSI properties exactly identifying `ProductName=Chunes`, `Manufacturer=Chunes`,
-  the selected release version, and UpgradeCode
-  `{2DDF67BD-FBDE-4BDF-A090-F1552C2C1330}`
-
-When re-enabled, the user is prompted before download. An unsigned, altered,
-untrusted, or differently published installer is deleted and never run. The
-retained helper waits for Chunes to stop, repeats the hash, signature, publisher,
-and MSI identity checks, waits for Windows Installer, then relaunches the
-installed app. A restart-required result does not launch a potentially
-not-yet-replaced executable.
-
-Opening an unsigned release page does not weaken the retained automatic-install
-checks. There is no unsigned automatic-update bypass.
+Chunes checks published releases in `getchunes/chunes`. When it finds a newer
+numeric version, it opens that version's exact GitHub release page in the
+default browser. Chunes never downloads an MSI, starts Windows Installer, or
+exits during an update check; updates are always installed manually.
 
 ## Configuration
 
@@ -248,59 +214,32 @@ asset loading resolves through PyInstaller's extraction directory when frozen.
 
 ## Release process
 
-`.github/workflows/release.yml` is the preferred stable signed path.
-It runs only by explicit workflow dispatch from `main`. Separate jobs build
-without secrets, sign in the `code-signing` environment, and publish with
-`contents: write` only in the `stable-release` environment. There is no unsigned
-bypass. Before publication, the workflow independently verifies Windows trust,
-the exact SignPath Foundation publisher, MSI identity, and the embedded
-`Chunes.exe` signature and metadata after SignPath output and after the artifact
-handoff.
-
-`.github/workflows/release-unsigned.yml` is the manual fallback when code
-signing is unavailable. It requires explicit confirmation and a separate
-protected environment, proves the raw EXE, embedded EXE, and MSI are unsigned,
-and includes a versioned installer warning. It publishes an immutable normal
-GitHub release as `latest`. The browser-based release check finds it, while the
-inactive signed installer path remains ineligible to install it.
+`.github/workflows/release-unsigned.yml` publishes GitHub releases. It runs only
+by explicit workflow dispatch from `main`, requires explicit confirmation and a
+protected `unsigned-manual-release` environment, proves the raw EXE, embedded
+EXE, and MSI are unsigned, checks the MSI identity, and includes a versioned
+installer warning. It publishes an immutable normal GitHub release as `latest`,
+which the in-app release check finds.
 
 Repository release immutability is enabled and must be independently confirmed
-by a maintainer before either workflow is dispatched; GitHub's scoped workflow
-token cannot read that administrator-only setting. Both release workflows require an
+by a maintainer before the workflow is dispatched; GitHub's scoped workflow
+token cannot read that administrator-only setting. The workflow requires an
 unused release and tag, an exact tag ref at the dispatched `GITHUB_SHA`, a draft
 containing only the expected MSI, and a GitHub asset digest matching the local
-SHA-256. They recheck the tag immediately before publication and fail unless
+SHA-256. It rechecks the tag immediately before publication and fails unless
 the published release reports `immutable: true`. External actions are
 pinned to resolved full commit SHAs, checkout credentials are not persisted,
 and handoff artifacts expire after one day without compression. Published
 releases are never recreated; corrections always use a new version.
 
-The signed path requires `SIGNPATH_API_TOKEN`, `SIGNPATH_ORGANIZATION_ID`,
-`SIGNPATH_PROJECT_SLUG`, and `SIGNPATH_SIGNING_POLICY_SLUG` as protected
-`code-signing` environment secrets.
+The step-by-step runbook is in [RELEASING.md](RELEASING.md).
 
-The SignPath artifact configuration and account setup checklist are under
-[`.signpath/`](.signpath/README.md). The configuration deep-signs the embedded
-`Chunes.exe`, repackages the MSI, and then signs the MSI itself while enforcing
-the Chunes product and version metadata.
-
-## Code signing policy
-
-The preferred stable release path uses free code signing provided by
-[SignPath.io](https://about.signpath.io), certificate by
-[SignPath Foundation](https://signpath.org). If that service is unavailable or
-the project is not approved, the separate unsigned manual-release path keeps
-releases possible without weakening automatic-update verification.
+## Maintainers
 
 - Authors and committers: [@dubsector](https://github.com/dubsector)
 - Reviewers: [@dubsector](https://github.com/dubsector)
 - Approvers: [@dubsector](https://github.com/dubsector)
 - Privacy policy: [PRIVACY.md](PRIVACY.md)
-
-As the current maintainer, `dubsector` is trusted to author and commit project
-changes, reviews changes from other contributors, and manually approves every
-code-signing request. The Chunes project acknowledges and accepts the
-[SignPath Foundation conditions for open-source code signing](https://signpath.org/terms).
 
 Chunes transfers information only for Discord presence, optional SoundCloud or
 YouTube Music album artwork, and optional GitHub update functions described in the

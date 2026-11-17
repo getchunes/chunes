@@ -86,7 +86,7 @@ jobs:
       - name: Test
         run: |
           python -m pip check
-          python -m compileall -q chunes.py presence.py protocol.py settings.py updater.py version.py tests
+          python -m compileall -q chunes.py presence.py protocol.py settings.py updater.py msi_identity.py version.py tests
           python -m unittest discover -s tests -v
 
       - name: Get hash-locked WiX Toolset
@@ -127,7 +127,7 @@ jobs:
           }
           $msi = $msiFiles[0].FullName
           $env:CHUNES_UNSIGNED_MSI = $msi
-          python -c "import os; from updater import verify_msi_identity; verify_msi_identity(os.environ['CHUNES_UNSIGNED_MSI'], os.environ['RELEASE_VERSION'])"
+          python -c "import os; from msi_identity import verify_msi_identity; verify_msi_identity(os.environ['CHUNES_UNSIGNED_MSI'], os.environ['RELEASE_VERSION'])"
           if ($LASTEXITCODE -ne 0) {
             throw "Unsigned MSI identity verification failed"
           }
@@ -226,7 +226,7 @@ jobs:
             throw "Unsigned MSI changed between build and publication"
           }
           $env:CHUNES_UNSIGNED_MSI = $msi
-          python -c "import os; from updater import verify_msi_identity; verify_msi_identity(os.environ['CHUNES_UNSIGNED_MSI'], os.environ['RELEASE_VERSION'])"
+          python -c "import os; from msi_identity import verify_msi_identity; verify_msi_identity(os.environ['CHUNES_UNSIGNED_MSI'], os.environ['RELEASE_VERSION'])"
           if ($LASTEXITCODE -ne 0) {
             throw "Publication MSI identity verification failed"
           }

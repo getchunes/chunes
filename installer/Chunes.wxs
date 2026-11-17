@@ -511,7 +511,7 @@
           Width="330"
           Height="45"
           NoPrefix="yes"
-          Text="This manual release does not weaken update verification. Chunes currently opens newer release pages for manual installation; its retained automatic installer accepts only Windows-trusted SignPath Foundation updates." />
+          Text="Chunes never installs updates by itself. When a newer version is published, it opens that release's GitHub page so you can download and verify it." />
       </Dialog>
       <?endif ?>
 

@@ -462,7 +462,7 @@ def main():
         menu=pystray.Menu(*build_menu_items(store_updates)),
     )
     if not store_updates:
-        _updater = UpdateController(on_install=lambda: quit_app(icon, None))
+        _updater = UpdateController()
         if settings.automatic_updates_enabled():
             _updater.start_automatic_check()
     try:

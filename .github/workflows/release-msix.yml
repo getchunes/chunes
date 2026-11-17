@@ -79,7 +79,7 @@ jobs:
       - name: Test
         run: |
           python -m pip check
-          python -m compileall -q chunes.py packaged.py presence.py protocol.py settings.py startup_task.py updater.py version.py tests
+          python -m compileall -q chunes.py packaged.py presence.py protocol.py settings.py startup_task.py updater.py msi_identity.py version.py tests
           python -m unittest discover -s tests -v
 
       - name: Build the MSIX package
