@@ -22,7 +22,7 @@ fn seconds(ticks: i64) -> f64 {
 ///
 /// Blocks on WinRT async calls, so call it from `spawn_blocking`.
 pub fn playing_track(allowed_sources: &[String]) -> windows::core::Result<Option<Track>> {
-    let manager = SessionManager::RequestAsync()?.get()?;
+    let manager = SessionManager::RequestAsync()?.join()?;
     for session in manager.GetSessions()? {
         let source = session.SourceAppUserModelId()?.to_string();
         let lowered = source.to_lowercase();
@@ -36,7 +36,7 @@ pub fn playing_track(allowed_sources: &[String]) -> windows::core::Result<Option
         if session.GetPlaybackInfo()?.PlaybackStatus()? != PlaybackStatus::Playing {
             continue;
         }
-        let properties = session.TryGetMediaPropertiesAsync()?.get()?;
+        let properties = session.TryGetMediaPropertiesAsync()?.join()?;
         let title = properties.Title()?.to_string();
         if title.is_empty() {
             continue;
